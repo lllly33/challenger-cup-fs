@@ -7,9 +7,9 @@ from datetime import datetime
 
 # PostgreSQL 数据库连接参数
 DB_HOST = "localhost"
-DB_NAME = "test1"
-DB_USER = "postgres"
-DB_PASSWORD = "123456"
+DB_NAME = "juicefs"
+DB_USER = "juiceuser"
+DB_PASSWORD = "0333"
 
 
 def find_hdf5_files_by_path(search_path):

@@ -7,9 +7,9 @@ import traceback
 
 # PostgreSQL 数据库连接参数
 DB_HOST = "localhost"
-DB_NAME = "test1"
-DB_USER = "postgres"
-DB_PASSWORD = "123456"
+DB_NAME = "juicefs"
+DB_USER = "juiceuser"
+DB_PASSWORD = "0333"
 
 
 def insert_hdf5_file_metadata(cursor, file_name, file_path):
@@ -186,5 +186,5 @@ def parse_and_store_hdf5_metadata(hdf5_file_path):
 
 
 if __name__ == "__main__":
-    HDF5_FILE_TO_PROCESS = '2A.GPM.Ka.V9-20211125.20230101-S231026-E004258.050253.V07A.HDF5'
+    HDF5_FILE_TO_PROCESS = '/Users/crocotear/Documents/挑战者杯/data/hdf5/2A.GPM.Ku.V9-20211125.20230101-S231026-E004258.050253.V07A.HDF5'
     parse_and_store_hdf5_metadata(HDF5_FILE_TO_PROCESS)

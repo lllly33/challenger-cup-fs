@@ -85,3 +85,45 @@
 - 搭建一个最小化的（3节点）JuiceFS + PostgreSQL实验环境。
 
   （待更新）-8/3/2025
+
+## 10. 项目进展日志
+
+### 2025年8月5日：数据库初始化、脚本修复与功能增强
+
+1.  **数据库初始化与数据写入脚本修复 (`writehdf5.py`)**
+    *   **问题**: 运行 `src/write/writehdf5.py` 脚本时，遇到两个连续的错误：
+        1.  `ModuleNotFoundError: No module named 'psycopg2'`: 缺少必要的数据库驱动库。
+        2.  `psycopg2.errors.UndefinedTable: relation "hdf5_files" does not exist`: 数据库中缺少存储元数据所需的表结构。
+    *   **解决方案**:
+        *   通过 `pip install -r requirements.txt` 命令，成功安装了包括 `psycopg2-binary` 在内的所有项目依赖。
+        *   分析 `writehdf5.py` 中的SQL插入语句，推导出所需的数据库表结构。
+        *   编写并执行了一个一次性的 `scripts/create_tables.py` 脚本，在 `juicefs` 数据库中成功创建了 `hdf5_files`, `hdf5_groups`, `hdf5_datasets`, 和 `hdf5_attributes` 四张核心表。
+    *   **成果**: `writehdf5.py` 脚本现已能成功连接数据库，并将HDF5文件的元数据完整地解析并存入PostgreSQL中。
+
+2.  **数据提取脚本修复 (`extract_hdf5.py`)**
+    *   **问题**: `src/read/extract_hdf5.py` 脚本中硬编码了错误的数据库连接信息（指向测试数据库 `test1`）。
+    *   **解决方案**: 将脚本中的数据库连接参数更新为与项目一致的配置（数据库: `juicefs`, 用户: `juiceuser`）。
+    *   **成果**: `extract_hdf5.py` 现已能正确连接到生产数据库，为后续的数据子集提取功能做好了准备。
+
+3.  **插值脚本健壮性修复与功能增强 (`main-new.py`)**
+    *   **问题**: `src/interpolation/main-new.py` 脚本在处理一个不包含任何数据点的经纬度范围时，会因数组越界 (`IndexError`) 而崩溃。
+    *   **解决方案**:
+        *   在脚本的数据预处理阶段增加了检查逻辑。如果用户指定的范围过滤后数据点为空，脚本将不再崩溃，而是会抛出一个明确的错误提示，告知用户该范围内无数据。
+        *   为了提升用户体验，为脚本增加了一个 `--info` 功能标志。
+    *   **成果**:
+        *   脚本的健壮性得到提升，能优雅地处理无效的输入范围。
+        *   用户现在可以使用 `python3 src/interpolation/main-new.py --info` 命令，快速查询HDF5文件的元数据（如数据覆盖的经纬度范围、总层数等），而无需执行耗时的插值计算。
+        *   为保证代码库的整洁和可追溯性，我们将添加了 `--info` 功能的脚本保存为 `main-new.py`，同时将原始的、仅含核心插值逻辑的脚本备份为 `main-original.py`。
+
+4.  **空间裁剪功能验证与优化 (`SpaceCropping.py`)**
+    *   **任务**: 验证项目第四个核心功能——空间裁剪。
+    *   **解决方案**:
+        *   分析了 `src/cropper/SpaceCropping.py` 的核心逻辑，确认其具备根据经纬度范围精确裁剪HDF5文件的能力，并能完整保留文件结构与元数据。
+        *   优化了 `src/cropper/main.py` 中的输出逻辑，采用了一种信息更丰富的文件命名规范（`[原始文件名]_[操作]_[关键参数].[后缀]`），以增强输出文件的可读性和可管理性。
+        *   成功运行了裁剪脚本，验证了其功能的正确性。
+    *   **成果**: 确认了空间裁剪功能模块已基本完成且运行正常，为后续的数据处理流程提供了关键支持。
+
+5.  **项目依赖管理 (`requirements.txt`)**
+    *   **问题**: 在调试和测试过程中，新安装了 `scipy`, `tqdm`, `joblib` 等依赖库，但并未记录到项目的依赖文件中。
+    *   **解决方案**: 使用 `pip freeze > requirements.txt` 命令，将当前Python环境中的所有依赖及其精确版本号，完整地更新到了 `requirements.txt` 文件中。
+    *   **成果**: 确保了项目的环境可复现性，为团队协作和后续部署扫清了障碍。

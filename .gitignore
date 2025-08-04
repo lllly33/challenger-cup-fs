@@ -15,4 +15,3 @@ out/*
 
 # 但保留一个特定的文件（比如 .gitkeep）
 !out/.gitkeep
-docs
