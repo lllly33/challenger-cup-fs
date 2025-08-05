@@ -122,107 +122,49 @@ def insert_hdf5_attribute_metadata(cursor, file_id, parent_path, attr_name, attr
     file_id, parent_path, attr_name, value_text, is_array, array_length, dtype, str_length, padding, cset))
 
 def parse_and_store_hdf5_metadata(hdf5_file_path):
-    """
-    解析 HDF5 文件并将其元数据存储到 PostgreSQL 数据库。
-    """
     conn = None
     try:
         conn = psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
         cur = conn.cursor()
 
         file_name = os.path.basename(hdf5_file_path)
+        print(f"[DEBUG] 连接数据库成功，开始处理文件 {file_name}")
+
         file_id = insert_hdf5_file_metadata(cur, file_name, hdf5_file_path)
-        # print(f"File '{file_name}' registered with ID: {file_id}") # 移除调试输出
+        print(f"[DEBUG] 插入文件元数据，file_id={file_id}")
 
         with h5py.File(hdf5_file_path, 'r') as hf:
             def visitor_func(name, obj):
                 full_path = "/" + name
                 parent_path = os.path.dirname(full_path)
                 if parent_path == "/":
-                    parent_path = "/"  # 根路径的父路径就是自身，或者根据需要设为None
+                    parent_path = "/"
+
+                print(f"[DEBUG] 访问组/数据集/属性: {full_path} 类型: {type(obj)}")
 
                 if isinstance(obj, h5py.Group):
-                    # 存储 Group 元数据
                     insert_hdf5_group_metadata(cur, file_id, obj.name.split('/')[-1], full_path, parent_path)
-                    # 存储 Group 的属性
                     for attr_name, attr_value in obj.attrs.items():
-                        # print("属性名:", repr(attr_name), "类型:", type(attr_value), "值:", repr(attr_value)) # 移除调试输出
                         insert_hdf5_attribute_metadata(cur, file_id, full_path, attr_name, attr_value)
 
                 elif isinstance(obj, h5py.Dataset):
-                    # 存储 Dataset 元数据
                     insert_hdf5_dataset_metadata(cur, file_id, obj.name.split('/')[-1], full_path, parent_path, obj)
-                    # 存储 Dataset 的属性
                     for attr_name, attr_value in obj.attrs.items():
-                        # print("属性名:", repr(attr_name), "类型:", type(attr_value), "值:", repr(attr_value)) # 移除调试输出
                         insert_hdf5_attribute_metadata(cur, file_id, full_path, attr_name, attr_value)
 
-            # 遍历 HDF5 文件的所有对象
             hf.visititems(visitor_func)
 
         conn.commit()
-        # print(f"Metadata for '{file_name}' successfully extracted and stored.") # 移除调试输出
-        return True, file_id # 返回成功状态和文件ID
+        return True, file_id
 
     except Exception as e:
-        # print(f"Error processing HDF5 file '{hdf5_file_path}': {e}") # 移除调试输出
+        print(f"[ERROR] 处理文件时发生异常: {e}")
+        import traceback
         traceback.print_exc()
         if conn:
             conn.rollback()
-        return False, None # 返回失败状态
-    finally:
-        if conn:
-            cur.close()
-            conn.close()
+        return False, None
 
-
-def parse_and_store_hdf5_metadata(hdf5_file_path):
-    """
-    解析 HDF5 文件并将其元数据存储到 PostgreSQL 数据库。
-    """
-    conn = None
-    try:
-        conn = psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
-        cur = conn.cursor()
-
-        file_name = os.path.basename(hdf5_file_path)
-        file_id = insert_hdf5_file_metadata(cur, file_name, hdf5_file_path)
-        print(f"File '{file_name}' registered with ID: {file_id}")
-
-        with h5py.File(hdf5_file_path, 'r') as hf:
-            def visitor_func(name, obj):
-                full_path = "/" + name
-                parent_path = os.path.dirname(full_path)
-                if parent_path == "/":
-                    parent_path = "/"  # 根路径的父路径就是自身，或者根据需要设为None
-
-                if isinstance(obj, h5py.Group):
-                    # 存储 Group 元数据
-                    insert_hdf5_group_metadata(cur, file_id, obj.name.split('/')[-1], full_path, parent_path)
-                    # 存储 Group 的属性
-                    for attr_name, attr_value in obj.attrs.items():
-                        print("属性名:", repr(attr_name), "类型:", type(attr_value), "值:", repr(attr_value))
-                        insert_hdf5_attribute_metadata(cur, file_id, full_path, attr_name, attr_value)
-
-                elif isinstance(obj, h5py.Dataset):
-                    # 存储 Dataset 元数据
-                    insert_hdf5_dataset_metadata(cur, file_id, obj.name.split('/')[-1], full_path, parent_path, obj)
-                    # 存储 Dataset 的属性
-                    for attr_name, attr_value in obj.attrs.items():
-                        print("属性名:", repr(attr_name), "类型:", type(attr_value), "值:", repr(attr_value))
-                        insert_hdf5_attribute_metadata(cur, file_id, full_path, attr_name, attr_value)
-
-            # 遍历 HDF5 文件的所有对象
-            hf.visititems(visitor_func)
-
-        conn.commit()
-        print(f"Metadata for '{file_name}' successfully extracted and stored.")
-
-    except Exception as e:
-        print(f"Error processing HDF5 file '{hdf5_file_path}': {e}")
-        traceback.print_exc()
-        if conn:
-            conn.rollback()
     finally:
         if conn:
             cur.close()

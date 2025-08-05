@@ -3,57 +3,13 @@ import numpy as np
 import h5py
 import os
 import time
-import argparse
 from scipy.spatial import cKDTree
 from tqdm import tqdm
 from joblib import Parallel, delayed
 
 
-def setup_input_interfaces():
-    parser = argparse.ArgumentParser(description='气象数据插值工具（支持三维范围指定）')
-    parser.add_argument('--input-file', required=True,
-                        help='JuiceFS中的HDF5文件路径（如：/mnt/juicefs/data/file.h5）')
-    parser.add_argument('--var-name', required=True,
-                        help='要插值的变量名（如：airTemperature、pressure）')
-    # 经纬度范围参数（空间范围）
-    parser.add_argument('--lon-min', type=float, help='经度最小值（可选）')
-    parser.add_argument('--lon-max', type=float, help='经度最大值（可选）')
-    parser.add_argument('--lat-min', type=float, help='纬度最小值（可选）')
-    parser.add_argument('--lat-max', type=float, help='纬度最大值（可选）')
-    # 新增：垂直层范围参数（三维变量专用）
-    parser.add_argument('--layer-min', type=int, help='起始层索引（从0开始，可选）')
-    parser.add_argument('--layer-max', type=int, help='结束层索引（从0开始，可选）')
-    # 其他参数
-    parser.add_argument('--resolution', type=float, default=0.1,
-                        help='目标网格分辨率（单位：度，默认0.1度）')
-    parser.add_argument('--output-dir', type=str, help='结果保存目录（默认与输入同目录）')
-    parser.add_argument('--info', action='store_true', help='仅显示文件信息而不执行插值')
-    return parser.parse_args()
 
 
-args = setup_input_interfaces()
-INPUT_FILE = args.input_file
-VAR_NAME = args.var_name
-GRID_RESOLUTION = args.resolution  # 插值密度
-
-# 输出路径设置
-output_dir = args.output_dir if args.output_dir else os.path.dirname(INPUT_FILE)
-os.makedirs(output_dir, exist_ok=True)
-OUTPUT_FILE = os.path.join(
-    output_dir,
-    f"{os.path.splitext(os.path.basename(INPUT_FILE))[0]}_{VAR_NAME}_processed.h5"
-)
-
-# 常量与参数配置
-CUSTOM_MISSING = -9999.9
-MAX_NEIGHBORS = 20
-POWER = 2
-MAX_DISTANCE = 5.0
-MIN_NEIGHBORS = 1
-BLOCK_SIZE = 100
-MAX_POINTS_PER_BLOCK = 5000
-PARALLEL = True
-NUM_CORES = -1  # 使用所有可用核心
 
 
 def read_hdf5_data(file_path, var_name):
@@ -76,7 +32,7 @@ def read_hdf5_data(file_path, var_name):
     return longitude, latitude, data
 
 
-def preprocess_data(longitude, latitude, data, layer_min=None, layer_max=None):
+def preprocess_data(longitude, latitude, data, lon_min_arg=None, lon_max_arg=None, lat_min_arg=None, lat_max_arg=None, layer_min=None, layer_max=None):
     print("预处理数据...")
     start = time.time()
     filled_data = data.copy()
@@ -178,30 +134,30 @@ def preprocess_data(longitude, latitude, data, layer_min=None, layer_max=None):
     lat_min, lat_max = valid_lat.min(), valid_lat.max()
 
     # 应用用户指定经纬度范围
-    if args.lon_min is not None:
-        lon_min = max(args.lon_min, -180.0)
+    if lon_min_arg is not None:
+        lon_min = max(lon_min_arg, -180.0)
         mask = valid_lon >= lon_min
         valid_lon, valid_lat = valid_lon[mask], valid_lat[mask]
         valid_data_layers = [l[mask] for l in valid_data_layers]
-    if args.lon_max is not None:
-        lon_max = min(args.lon_max, 180.0)
+    if lon_max_arg is not None:
+        lon_max = min(lon_max_arg, 180.0)
         mask = valid_lon <= lon_max
         valid_lon, valid_lat = valid_lon[mask], valid_lat[mask]
         valid_data_layers = [l[mask] for l in valid_data_layers]
-    if args.lat_min is not None:
-        lat_min = max(args.lat_min, -90.0)
+    if lat_min_arg is not None:
+        lat_min = max(lat_min_arg, -90.0)
         mask = valid_lat >= lat_min
         valid_lon, valid_lat = valid_lon[mask], valid_lat[mask]
         valid_data_layers = [l[mask] for l in valid_data_layers]
-    if args.lat_max is not None:
-        lat_max = min(args.lat_max, 90.0)
+    if lat_max_arg is not None:
+        lat_max = min(lat_max_arg, 90.0)
         mask = valid_lat <= lat_max
         valid_lon, valid_lat = valid_lon[mask], valid_lat[mask]
         valid_data_layers = [l[mask] for l in valid_data_layers]
 
     # 检查过滤后是否还有数据
     if len(valid_lon) == 0:
-        raise ValueError(f"指定的经纬度范围 (lon: [{args.lon_min}, {args.lon_max}], lat: [{args.lat_min}, {args.lat_max}]) 内没有找到任何有效的数据点。请尝试更大的范围或不设置范围。")
+        raise ValueError(f"指定的经纬度范围 (lon: [{lon_min_arg}, {lon_max_arg}], lat: [{lat_min_arg}, {lat_max_arg}]) 内没有找到任何有效的数据点。请尝试更大的范围或不设置范围。")
 
     print(f"预处理耗时: {time.time() - start:.2f}秒，总缺失值: {total_missing}")
     return valid_lon, valid_lat, valid_data_layers, lon_min, lon_max, lat_min, lat_max, total_layers
@@ -305,7 +261,7 @@ def batch_idw(lon_valid, lat_valid, data_valid, grid_lon, grid_lat, layer_idx):
     return result, valid_count, result.size
 
 
-def save_to_hdf5(output_path, grid_lon, grid_lat, all_results, total_layers, var_name, original_dim):
+def save_to_hdf5(output_path, grid_lon, grid_lat, all_results, total_layers, var_name, original_dim, resolution, layer_min_arg=None, layer_max_arg=None):
     print(f"保存结果到: {output_path}")
     with h5py.File(output_path, 'w') as f:
         grp = f.create_group('idw_interpolation')
@@ -350,58 +306,81 @@ def save_to_hdf5(output_path, grid_lon, grid_lat, all_results, total_layers, var
 
         # 元数据保持不变
         grp.attrs['missing_value'] = CUSTOM_MISSING
-        grp.attrs['grid_resolution'] = GRID_RESOLUTION
+        grp.attrs['grid_resolution'] = resolution
         grp.attrs['variable_name'] = var_name
         grp.attrs['original_dimension'] = original_dim
         if original_dim == 3:
-            grp.attrs['layers_processed'] = f"{args.layer_min or 0}-{args.layer_max or (total_layers-1)}"
+            grp.attrs['layers_processed'] = f"{layer_min_arg or 0}-{layer_max_arg or (total_layers-1)}"
 
-def generate_report(total_valid, total_points, total_layers, var_name, original_dim):
+def generate_report(total_valid, total_points, total_layers, var_name, original_dim, output_file, resolution, layer_min_arg, layer_max_arg):
     coverage = 100 * total_valid / total_points if total_points else 0
     print("\n" + "=" * 60)
     print("                  插值完成报告")
     print("=" * 60)
     print(f"变量名: {var_name}")
     print(f"原始维度: {original_dim}D，处理层数: {total_layers}")
-    if original_dim == 3 and (args.layer_min is not None or args.layer_max is not None):
-        print(f"层范围: {args.layer_min or 0}至{args.layer_max or (total_layers - 1)}")
+    if original_dim == 3 and (layer_min_arg is not None or layer_max_arg is not None):
+        print(f"层范围: {layer_min_arg or 0}至{layer_max_arg or (total_layers - 1)}")
     print(f"总覆盖率: {coverage:.2f}%")
-    print(f"结果文件: {OUTPUT_FILE}")
+    print(f"结果文件: {output_file}")
     print("=" * 60)
 
-
-def main():
+def run_interpolation(
+    input_file: str,
+    var_name: str,
+    resolution: float = 0.1,
+    output_dir: str = None,
+    lon_min: float = None,
+    lon_max: float = None,
+    lat_min: float = None,
+    lat_max: float = None,
+    layer_min: int = None,
+    layer_max: int = None,
+    info_only: bool = False
+):
     try:
-        if args.info:
+        # 输出路径设置
+        output_dir = output_dir if output_dir else os.path.dirname(input_file)
+        os.makedirs(output_dir, exist_ok=True)
+        output_file = os.path.join(
+            output_dir,
+            f"{os.path.splitext(os.path.basename(input_file))[0]}_{var_name}_processed.h5"
+        )
+
+        if info_only:
             print("--- 文件信息查询模式 ---")
-            lon, lat, data = read_hdf5_data(INPUT_FILE, VAR_NAME)
-            valid_lon, valid_lat, _, lon_min, lon_max, lat_min, lat_max, total_layers = preprocess_data(
+            lon, lat, data = read_hdf5_data(input_file, var_name)
+            valid_lon, valid_lat, _, lon_min_res, lon_max_res, lat_min_res, lat_max_res, total_layers = preprocess_data(
                 lon, lat, data
             )
             print("\n" + "=" * 60)
-            print(f"文件: {os.path.basename(INPUT_FILE)}")
-            print(f"变量: {VAR_NAME}")
+            print(f"文件: {os.path.basename(input_file)}")
+            print(f"变量: {var_name}")
             print(f"数据总层数: {data.shape[2]}")
             print(f"有效数据点覆盖范围:")
-            print(f"  经度 (Lon): {lon_min:.2f} 到 {lon_max:.2f}")
-            print(f"  纬度 (Lat): {lat_min:.2f} 到 {lat_max:.2f}")
+            print(f"  经度 (Lon): {lon_min_res:.2f} 到 {lon_max_res:.2f}")
+            print(f"  纬度 (Lat): {lat_min_res:.2f} 到 {lat_max_res:.2f}")
             print("=" * 60)
-            return
+            return output_file # Return output_file even in info_only mode for consistency
 
         start = time.time()
         # 读取数据
-        lon, lat, data = read_hdf5_data(INPUT_FILE, VAR_NAME)
+        lon, lat, data = read_hdf5_data(input_file, var_name)
         original_dim = 2 if data.shape[2] == 1 else 3
 
         # 预处理（传入层范围参数）
-        valid_lon, valid_lat, data_layers, lon_min, lon_max, lat_min, lat_max, total_layers = preprocess_data(
+        valid_lon, valid_lat, data_layers, lon_min_res, lon_max_res, lat_min_res, lat_max_res, total_layers = preprocess_data(
             lon, lat, data,
-            layer_min=args.layer_min,  # 传入起始层
-            layer_max=args.layer_max  # 传入结束层
+            lon_min_arg=lon_min,
+            lon_max_arg=lon_max,
+            lat_min_arg=lat_min,
+            lat_max_arg=lat_max,
+            layer_min=layer_min,  # 传入起始层
+            layer_max=layer_max  # 传入结束层
         )
 
         # 创建插值网格
-        grid_lon, grid_lat = create_interpolation_grid(lon_min, lon_max, lat_min, lat_max, GRID_RESOLUTION)
+        grid_lon, grid_lat = create_interpolation_grid(lon_min_res, lon_max_res, lat_min_res, lat_max_res, resolution)
 
         # 批量插值
         all_results = []
@@ -414,17 +393,16 @@ def main():
             del res
 
         # 保存结果
-        save_to_hdf5(OUTPUT_FILE, grid_lon, grid_lat, all_results, total_layers, VAR_NAME, original_dim)
+        save_to_hdf5(output_file, grid_lon, grid_lat, all_results, total_layers, var_name, original_dim, resolution, layer_min, layer_max)
 
         # 生成报告
-        generate_report(total_valid, total_points, total_layers, VAR_NAME, original_dim)
+        generate_report(total_valid, total_points, total_layers, var_name, original_dim, output_file, resolution, layer_min, layer_max)
         print(f"总耗时: {time.time() - start:.2f}秒")
+        return output_file
 
     except Exception as e:
         print(f"错误: {e}")
         import traceback
         traceback.print_exc()
+        return None
 
-
-if __name__ == "__main__":
-    main()
