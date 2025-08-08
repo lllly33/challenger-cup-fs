@@ -15,7 +15,14 @@ from .interpolation.main_new import run_interpolation
 
 
 
+from .read.extract_hdf5 import (
+    list_available_paths as extract_list_available_paths,
+    extract_hdf5_subset as extract_run_extract_hdf5_subset
+)
+
+
 def get_hdf5_files_from_db():
+
     """
     从数据库中获取所有已入库的HDF5文件信息。
     返回一个列表，每个元素是一个字典，包含 'id' 和 'file_name'。
@@ -418,5 +425,63 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"\n--- 发生意外错误 ---")
         print(f"错误: {e}")
+
+def get_hdf5_internal_paths(file_id: int) -> list:
+    """
+    获取指定HDF5文件内部的所有Group和Dataset路径。
+    Args:
+        file_id (int): HDF5文件的数据库ID。
+    Returns:
+        list: 包含所有内部路径的列表。
+    """
+    return extract_list_available_paths(file_id)
+
+def perform_hdf5_subset_extraction(file_id: int, target_path: str, output_filename: str = None) -> str:
+    """
+    执行HDF5子集提取操作。
+    Args:
+        file_id (int): HDF5文件的数据库ID。
+        target_path (str): 要提取的HDF5内部路径（Group或Dataset）。
+        output_filename (str, optional): 输出文件名。如果为None，则自动生成。
+    Returns:
+        str: 成功提取后生成的文件的绝对路径。
+    Raises:
+        Exception: 如果提取失败。
+    """
+    # 获取原始文件信息，用于生成输出文件名
+    conn = None
+    try:
+        conn = psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
+        cur = conn.cursor()
+        cur.execute("SELECT file_name FROM hdf5_files WHERE id = %s", (file_id,))
+        file_record = cur.fetchone()
+        if not file_record:
+            raise ValueError(f"未找到文件ID为 {file_id} 的HDF5文件记录。")
+        original_file_name = file_record[0]
+    finally:
+        if conn:
+            cur.close()
+            conn.close()
+
+    # 生成输出文件路径
+    output_dir = "out" # 提取的输出目录
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    if not output_filename:
+        base_name = os.path.splitext(original_file_name)[0]
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_path = target_path.replace('/', '_').replace('\\', '_').strip('_')
+        output_filename = f"{base_name}_extracted_{safe_path}_{timestamp}.h5"
+
+    output_file_path = os.path.join(output_dir, output_filename)
+
+    success = extract_run_extract_hdf5_subset(file_id, target_path, output_file_path)
+
+    if success:
+        return os.path.abspath(output_file_path)
+    else:
+        raise Exception("HDF5子集提取失败。")
+
 
 

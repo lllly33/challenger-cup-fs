@@ -4,7 +4,7 @@ import uuid
 import shutil
 from datetime import datetime # 导入 datetime 模块
 from src.write.writehdf5 import parse_and_store_hdf5_metadata
-from src.api_service import get_hdf5_files_from_db, get_hdf5_latlon_data, find_and_crop_hdf5, get_hdf5_variables_from_db, get_hdf5_groups_from_db
+from src.api_service import get_hdf5_files_from_db, get_hdf5_latlon_data, find_and_crop_hdf5, get_hdf5_variables_from_db, get_hdf5_groups_from_db, get_hdf5_internal_paths, perform_hdf5_subset_extraction
 from flask import jsonify # 导入 jsonify
 from config import JUICEFS_MOUNT_POINT
 from multiprocessing import Process, Manager, Queue # 导入 multiprocessing 模块
@@ -68,9 +68,18 @@ def worker(task_queue, task_statuses):
                         layer_min=layer_min,
                         layer_max=layer_max
                     )
+                elif task_type == 'extract_subset':
+                    file_id = task_data['file_id']
+                    target_path = task_data['target_path']
+                    output_filename = task_data.get('output_filename')
+                    output_path = perform_hdf5_subset_extraction(
+                        file_id=file_id,
+                        target_path=target_path,
+                        output_filename=output_filename
+                    )
                 else:
                     raise ValueError(f"未知任务类型: {task_type}")
-                task_statuses[task_id] = {'status': 'COMPLETED', 'message': '任务完成', 'result': output_path}
+                task_statuses[task_id] = {'status': 'COMPLETED', 'message': '任务完成', 'result': output_path, 'task_type': task_type}
                 print(f"[WORKER] 任务 {task_id} 完成，结果: {output_path}")
             except Exception as e:
                 task_statuses[task_id] = {'status': 'FAILED', 'message': f'任务失败: {e}'}
@@ -117,6 +126,52 @@ def get_file_variables(file_id):
     # 注意：这里不再对variables是否为空做特殊判断，直接返回数据库查询结果
     print(f"[DEBUG] get_file_variables returning success for file_id: {file_id}, variables: {variables}")
     return jsonify({"status": "success", "data": variables}), 200
+
+@app.route('/api/hdf5_internal_paths/<int:file_id>')
+def list_hdf5_internal_paths(file_id):
+    """
+    获取指定HDF5文件内部的所有Group和Dataset路径。
+    """
+    try:
+        paths = get_hdf5_internal_paths(file_id)
+        return jsonify({"status": "success", "data": paths}), 200
+    except Exception as e:
+        print(f"[ERROR] 获取HDF5内部路径失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": f"获取HDF5内部路径失败: {e}"}), 500
+
+@app.route('/api/extract_hdf5_subset', methods=['POST'])
+def extract_hdf5_subset_api():
+    """
+    提交HDF5子集提取任务。
+    """
+    try:
+        data = request.get_json()
+        file_id = data.get('file_id')
+        target_path = data.get('target_path')
+        output_filename = data.get('output_filename')
+
+        if not file_id or not target_path:
+            return jsonify({"status": "error", "message": "缺少必要参数: file_id, target_path"}), 400
+
+        task_id = str(uuid.uuid4())
+        task_data = {
+            'task_type': 'extract_subset',
+            'file_id': file_id,
+            'target_path': target_path,
+            'output_filename': output_filename
+        }
+        task_queue.put((task_id, task_data))
+        task_statuses[task_id] = {'status': 'PENDING', 'message': '子集提取任务已提交，等待处理'}
+
+        return jsonify({"status": "success", "message": "子集提取任务已提交", "task_id": task_id}), 202
+
+    except Exception as e:
+        print(f"[ERROR] 子集提取请求处理失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": f"子集提取请求处理失败: {e}"}), 500
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -298,7 +353,7 @@ def interpolate_hdf5_file():
 def get_task_status(task_id):
     status = task_statuses.get(task_id)
     if status:
-        return jsonify(status), 200
+        return jsonify(status), 200 # 直接返回整个 status 字典
     else:
         return jsonify({"status": "error", "message": "任务ID不存在"}), 404
 

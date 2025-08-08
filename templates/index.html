@@ -68,7 +68,7 @@
         }
 
         /* 针对下拉框选项文本过长的问题 */
-        #hdf5FileSelect {
+        .hdf5-select {
             word-wrap: break-word; /* 允许长单词在必要时换行 */
             white-space: normal;   /* 允许文本换行 */
             width: 100%;           /* 确保宽度为100% */
@@ -76,7 +76,7 @@
         }
 
         /* 针对下拉框选项本身 */
-        #hdf5FileSelect option {
+        .hdf5-select option {
             word-wrap: break-word;
             white-space: normal;
             overflow: hidden;
@@ -117,6 +117,13 @@
                 <a class="nav-link" href="#" data-target="#processing-card">
                     <i class="fas fa-fw fa-wrench"></i>
                     <span>数据处理</span></a>
+            </li>
+
+            <!-- Nav Item - Data Browse -->
+            <li class="nav-item">
+                <a class="nav-link" href="#" data-target="#data-browse-card">
+                    <i class="fas fa-fw fa-folder-open"></i>
+                    <span>数据浏览</span></a>
             </li>
 
             <!-- Divider -->
@@ -183,7 +190,7 @@
                             <form id="processForm">
                                 <div class="mb-3">
                                     <label for="hdf5FileSelect" class="form-label">选择HDF5文件:</label>
-                                    <select class="form-select" id="hdf5FileSelect" name="file_id" required>
+                                    <select class="form-select hdf5-select" id="hdf5FileSelect" name="file_id" required>
                                         <option value="">请选择一个文件</option>
                                     </select>
                                 </div>
@@ -209,6 +216,45 @@
                                 <button type="submit" class="btn btn-success">执行操作</button>
                             </form>
                             <div id="processResult" class="mt-3"></div>
+                        </div>
+                    </div>
+
+                    <!-- Data Browse Card -->
+                    <div class="card shadow mb-4" id="data-browse-card" style="display: none;">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">数据浏览与提取</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label for="browseHdf5FileSelect" class="form-label">选择HDF5文件:</label>
+                                <select class="form-select hdf5-select" id="browseHdf5FileSelect" required>
+                                    <option value="">请选择一个文件</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">文件内部结构:</label>
+                                <div id="hdf5StructureTree" class="border p-3" style="max-height: 400px; overflow-y: auto;">
+                                    <!-- HDF5 结构将在这里动态加载 -->
+                                    请选择文件以加载结构...
+                                </div>
+                            </div>
+
+                            <hr>
+
+                            <form id="extractSubsetForm">
+                                <h6 class="m-0 font-weight-bold text-primary mb-3">提取子集</h6>
+                                <div class="mb-3">
+                                    <label for="extractTargetPath" class="form-label">要提取的路径 (Group/Dataset):</label>
+                                    <input type="text" class="form-control" id="extractTargetPath" placeholder="例如: /FS/CSF/binBBBottom" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="extractOutputFilename" class="form-label">输出文件名 (可选):</label>
+                                    <input type="text" class="form-control" id="extractOutputFilename" placeholder="留空则自动生成">
+                                </div>
+                                <button type="submit" class="btn btn-info">提取子集</button>
+                            </form>
+                            <div id="extractResult" class="mt-3"></div>
                         </div>
                     </div>
 
@@ -256,7 +302,8 @@
         const sidebarLinks = document.querySelectorAll('a.nav-link[data-target]');
         const uploadCard = document.getElementById('upload-card');
         const processingCard = document.getElementById('processing-card');
-        const cards = [uploadCard, processingCard];
+        const dataBrowseCard = document.getElementById('data-browse-card');
+        const cards = [uploadCard, processingCard, dataBrowseCard];
 
         const uploadForm = document.getElementById('uploadForm');
         const uploadResultDiv = document.getElementById('uploadResult');
@@ -268,6 +315,13 @@
         const operationSelect = document.getElementById('operationSelect');
         const dynamicParamsDiv = document.getElementById('dynamicParams');
         const processResultDiv = document.getElementById('processResult');
+
+        const browseHdf5FileSelect = document.getElementById('browseHdf5FileSelect');
+        const hdf5StructureTree = document.getElementById('hdf5StructureTree');
+        const extractSubsetForm = document.getElementById('extractSubsetForm');
+        const extractTargetPath = document.getElementById('extractTargetPath');
+        const extractOutputFilename = document.getElementById('extractOutputFilename');
+        const extractResultDiv = document.getElementById('extractResult');
 
         // --- Sidebar Navigation Logic ---
         sidebarLinks.forEach(link => {
@@ -334,17 +388,27 @@
 
         // --- Data Processing Logic ---
 
-        // Function to load HDF5 files into the select dropdown
+        // Function to load HDF5 files into the select dropdowns
         function loadHdf5Files() {
             fetch('/api/hdf5_files')
                 .then(response => response.json())
                 .then(data => {
+                    // For Processing Card
                     hdf5FileSelect.innerHTML = '<option value="">请选择一个文件</option>';
                     data.forEach(file => {
                         const option = document.createElement('option');
                         option.value = file.id;
                         option.textContent = file.file_name;
                         hdf5FileSelect.appendChild(option);
+                    });
+
+                    // For Data Browse Card
+                    browseHdf5FileSelect.innerHTML = '<option value="">请选择一个文件</option>';
+                    data.forEach(file => {
+                        const option = document.createElement('option');
+                        option.value = file.id;
+                        option.textContent = file.file_name;
+                        browseHdf5FileSelect.appendChild(option);
                     });
                 });
         }
@@ -381,6 +445,48 @@
                     });
             } else {
                 groupSelectContainer.style.display = 'none';
+            }
+        });
+
+        // Data Browse: File selection event
+        browseHdf5FileSelect.addEventListener('change', function() {
+            const fileId = this.value;
+            hdf5StructureTree.innerHTML = ''; // Clear previous structure
+
+            if (fileId) {
+                hdf5StructureTree.innerHTML = '加载中...';
+                fetch(`/api/hdf5_internal_paths/${fileId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success' && data.data.length > 0) {
+                            // Build a simple tree-like structure
+                            const ul = document.createElement('ul');
+                            ul.style.listStyleType = 'none';
+                            ul.style.paddingLeft = '0';
+
+                            data.data.forEach(path => {
+                                const li = document.createElement('li');
+                                li.textContent = path;
+                                li.style.cursor = 'pointer';
+                                li.style.padding = '2px 0';
+                                li.classList.add('text-primary'); // Make it look clickable
+                                li.addEventListener('click', () => {
+                                    extractTargetPath.value = path; // Fill the extract path input
+                                });
+                                ul.appendChild(li);
+                            });
+                            hdf5StructureTree.innerHTML = '';
+                            hdf5StructureTree.appendChild(ul);
+                        } else {
+                            hdf5StructureTree.innerHTML = '无可用路径。';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error loading HDF5 structure:', error);
+                        hdf5StructureTree.innerHTML = '加载结构失败。';
+                    });
+            } else {
+                hdf5StructureTree.innerHTML = '请选择文件以加载结构...';
             }
         });
 
@@ -496,20 +602,70 @@
             }
         });
 
+        // Data Browse: Extract Subset Form submission
+        extractSubsetForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            const fileId = browseHdf5FileSelect.value;
+            const targetPath = extractTargetPath.value;
+            const outputFilename = extractOutputFilename.value;
+
+            if (!fileId || !targetPath) {
+                extractResultDiv.innerHTML = '<div class="alert alert-warning">请选择文件并输入目标路径。</div>';
+                return;
+            }
+
+            extractResultDiv.innerHTML = '<div class="alert alert-info">正在提取子集，请稍候...</div>';
+
+            fetch('/api/extract_hdf5_subset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    file_id: fileId,
+                    target_path: targetPath,
+                    output_filename: outputFilename
+                })
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.status === 'success' && result.task_id) {
+                    extractResultDiv.innerHTML = `<div class="alert alert-info">${result.message} 任务ID: ${result.task_id}</div>`;
+                    pollTaskStatus(result.task_id); // <--- 添加这一行
+                } else {
+                    extractResultDiv.innerHTML = `<div class="alert alert-danger">${result.message || '提交任务失败。'}</div>`;
+                }
+            })
+            .catch(error => {
+                console.error('Extract error:', error);
+                extractResultDiv.innerHTML = '<div class="alert alert-danger">提取失败。</div>';
+            });
+        });
+
         function pollTaskStatus(taskId) {
             const pollInterval = setInterval(() => {
                 fetch(`/api/status/${taskId}`)
                     .then(res => res.json())
                     .then(statusData => {
+                        let targetResultDiv;
+                        // Determine which result div to update based on task_type
+                        if (statusData.task_type === 'extract_subset') {
+                            targetResultDiv = extractResultDiv;
+                        } else { // crop or interpolate
+                            targetResultDiv = processResultDiv;
+                        }
+
                         if (statusData.status === 'COMPLETED') {
                             clearInterval(pollInterval);
-                            const downloadLink = `<a href="/download/${taskId}" class="btn btn-success mt-2">下载结果文件</a>`;
-                            processResultDiv.innerHTML = `<div class="alert alert-success">任务完成！ ${downloadLink}</div>`;
+                            let downloadLink = '';
+                            if (statusData.result) {
+                                downloadLink = `<a href="/download/${taskId}" class="btn btn-success mt-2">下载结果文件</a>`;
+                            }
+                            targetResultDiv.innerHTML = `<div class="alert alert-success">任务完成！ ${downloadLink}</div>`;
+
                         } else if (statusData.status === 'FAILED') {
                             clearInterval(pollInterval);
-                            processResultDiv.innerHTML = `<div class="alert alert-danger">任务失败: ${statusData.message}</div>`;
+                            targetResultDiv.innerHTML = `<div class="alert alert-danger">任务失败: ${statusData.message}</div>`;
                         } else {
-                            processResultDiv.innerHTML = `<div class="alert alert-info">${statusData.message}</div>`;
+                            targetResultDiv.innerHTML = `<div class="alert alert-info">${statusData.message}</div>`;
                         }
                     });
             }, 3000);
