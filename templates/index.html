@@ -1,293 +1,413 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <title>地球科学数据处理平台</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body { background-color: #f8f9fa; }
-        .navbar { box-shadow: 0 2px 4px rgba(0,0,0,.1); }
-        .card { margin-top: 20px; }
-    </style>
+
+    <!-- Custom Fonts for this template-->
+    <link href="/static/vendor/fontawesome-free/css/all.min.css" rel="stylesheet" type="text/css">
+    <link
+        href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i"
+        rel="stylesheet">
+
+    <!-- Custom styles for this template-->
+    <link href="/static/css/sb-admin-2.min.css" rel="stylesheet">
+
 </head>
-<body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-        <div class="container-fluid">
-            <a class="navbar-brand" href="#">地球科学数据处理平台</a>
+
+<body id="page-top">
+
+    <!-- Page Wrapper -->
+    <div id="wrapper">
+
+        <!-- Sidebar -->
+        <ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
+
+            <!-- Sidebar - Brand -->
+            <a class="sidebar-brand d-flex align-items-center justify-content-center" href="index.html">
+                <div class="sidebar-brand-icon rotate-n-15">
+                    <i class="fas fa-globe"></i>
+                </div>
+                <div class="sidebar-brand-text mx-3">数据处理平台</div>
+            </a>
+
+            <!-- Divider -->
+            <hr class="sidebar-divider my-0">
+
+            <!-- Nav Item - Upload -->
+            <li class="nav-item active">
+                <a class="nav-link" href="#" data-target="#upload-card">
+                    <i class="fas fa-fw fa-upload"></i>
+                    <span>文件上传</span></a>
+            </li>
+
+            <!-- Nav Item - Processing -->
+            <li class="nav-item">
+                <a class="nav-link" href="#" data-target="#processing-card">
+                    <i class="fas fa-fw fa-cogs"></i>
+                    <span>数据处理</span></a>
+            </li>
+
+            <!-- Divider -->
+            <hr class="sidebar-divider d-none d-md-block">
+
+            <!-- Sidebar Toggler (Sidebar) -->
+            <div class="text-center d-none d-md-inline">
+                <button class="rounded-circle border-0" id="sidebarToggle"></button>
+            </div>
+
+        </ul>
+        <!-- End of Sidebar -->
+
+        <!-- Content Wrapper -->
+        <div id="content-wrapper" class="d-flex flex-column">
+
+            <!-- Main Content -->
+            <div id="content">
+
+                <!-- Topbar -->
+                <nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
+                    <!-- Sidebar Toggle (Topbar) -->
+                    <button id="sidebarToggleTop" class="btn btn-link d-md-none rounded-circle mr-3">
+                        <i class="fa fa-bars"></i>
+                    </button>
+                    <h1 class="h3 mb-0 text-gray-800">控制面板</h1>
+                </nav>
+                <!-- End of Topbar -->
+
+                <!-- Begin Page Content -->
+                <div class="container-fluid">
+
+                    <!-- Upload Card -->
+                    <div class="card shadow mb-4" id="upload-card">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">文件上传</h6>
+                        </div>
+                        <div class="card-body">
+                            <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
+                                <div class="mb-3">
+                                    <label for="file" class="form-label">选择HDF5文件:</label>
+                                    <input class="form-control" type="file" id="file" name="file" accept=".h5,.hdf5" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="new_filename" class="form-label">重命名 (可选):</label>
+                                    <input class="form-control" type="text" id="new_filename" name="new_filename" placeholder="留空则使用原文件名+时间戳">
+                                </div>
+                                <button type="submit" class="btn btn-primary">上传并入库</button>
+                            </form>
+                            <div id="uploadResult" class="mt-3"></div>
+                        </div>
+                    </div>
+
+                    <!-- Processing Card -->
+                    <div class="card shadow mb-4" id="processing-card" style="display: none;">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">数据处理</h6>
+                        </div>
+                        <div class="card-body">
+                            <form id="processForm">
+                                <div class="mb-3">
+                                    <label for="hdf5FileSelect" class="form-label">选择HDF5文件:</label>
+                                    <select class="form-select" id="hdf5FileSelect" name="file_id" required>
+                                        <option value="">请选择一个文件</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-3" id="groupSelectContainer" style="display: none;">
+                                    <label for="groupSelect" class="form-label">选择组 (Group):</label>
+                                    <select class="form-select" id="groupSelect" name="group_path">
+                                        <option value="">加载中...</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="operationSelect" class="form-label">选择操作:</label>
+                                    <select class="form-select" id="operationSelect" name="operation" required>
+                                        <option value="">请选择一个操作</option>
+                                        <option value="crop">空间裁剪</option>
+                                        <option value="interpolate">数据插值</option>
+                                    </select>
+                                </div>
+
+                                <div id="dynamicParams" class="mb-3"></div>
+
+                                <button type="submit" class="btn btn-success">执行操作</button>
+                            </form>
+                            <div id="processResult" class="mt-3"></div>
+                        </div>
+                    </div>
+
+                </div>
+                <!-- /.container-fluid -->
+
+            </div>
+            <!-- End of Main Content -->
+
+            <!-- Footer -->
+            <footer class="sticky-footer bg-white">
+                <div class="container my-auto">
+                    <div class="copyright text-center my-auto">
+                        <span>Copyright &copy; Your Website 2024</span>
+                    </div>
+                </div>
+            </footer>
+            <!-- End of Footer -->
+
         </div>
-    </nav>
+        <!-- End of Content Wrapper -->
 
-    <div class="container mt-4">
-        <div class="card">
-            <div class="card-header">
-                欢迎使用
-            </div>
-            <div class="card-body">
-                <p class="card-text">这是一个基于JuiceFS和PostgreSQL的高性能数据处理服务平台。</p>
-                
-                <h5 class="card-title">上传HDF5文件</h5>
-                <form action="/upload" method="post" enctype="multipart/form-data">
-                    <div class="mb-3">
-                        <label for="file" class="form-label">选择HDF5文件:</label>
-                        <input class="form-control" type="file" id="file" name="file" accept=".h5,.hdf5" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="new_filename" class="form-label">重命名 (可选):</label>
-                        <input class="form-control" type="text" id="new_filename" name="new_filename" placeholder="留空则使用原文件名+时间戳">
-                    </div>
-                    <button type="submit" class="btn btn-primary">上传并入库</button>
-                </form>
-
-                <div id="uploadResult" class="mt-3"></div>
-
-            </div>
-        </div>
-
-        <div class="card mt-4">
-            <div class="card-header">
-                数据处理
-            </div>
-            <div class="card-body">
-                <h5 class="card-title">选择HDF5文件并执行操作</h5>
-                <form id="processForm">
-                    <div class="mb-3">
-                        <label for="hdf5FileSelect" class="form-label">选择HDF5文件:</label>
-                        <select class="form-select" id="hdf5FileSelect" name="file_id" required>
-                            <option value="">请选择一个文件</option>
-                        </select>
-                    </div>
-
-                    <div class="mb-3" id="groupSelectContainer" style="display: none;">
-                        <label for="groupSelect" class="form-label">选择组 (Group):</label>
-                        <select class="form-select" id="groupSelect" name="group_path">
-                            <option value="">加载中...</option>
-                        </select>
-                    </div>
-
-                    <div class="mb-3">
-                        <label for="operationSelect" class="form-label">选择操作:</label>
-                        <select class="form-select" id="operationSelect" name="operation" required>
-                            <option value="">请选择一个操作</option>
-                            <option value="crop">空间裁剪</option>
-                            <!-- <option value="extract">数据提取</option> -->
-                            <option value="interpolate">数据插值</option>
-                        </select>
-                    </div>
-
-                    <div id="dynamicParams" class="mb-3">
-                        <!-- 动态参数将在这里加载 -->
-                    </div>
-
-                    <button type="submit" class="btn btn-success">执行操作</button>
-                </form>
-
-                <div id="processResult" class="mt-3"></div>
-
-            </div>
-        </div>
     </div>
+    <!-- End of Page Wrapper -->
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Scroll to Top Button-->
+    <a class="scroll-to-top rounded" href="#page-top">
+        <i class="fas fa-angle-up"></i>
+    </a>
+
+    <!-- Bootstrap core JavaScript-->
+    <script src="/static/vendor/jquery/jquery.min.js"></script>
+    <script src="/static/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+
+    <!-- Core plugin JavaScript-->
+    <script src="/static/vendor/jquery-easing/jquery.easing.min.js"></script>
+
+    <!-- Custom scripts for all pages-->
+    <script src="/static/js/sb-admin-2.min.js"></script>
+
+    <!-- Page level custom scripts -->
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const hdf5FileSelect = document.getElementById('hdf5FileSelect');
-            const groupSelectContainer = document.getElementById('groupSelectContainer');
-            const groupSelect = document.getElementById('groupSelect');
-            const operationSelect = document.getElementById('operationSelect');
-            const dynamicParamsDiv = document.getElementById('dynamicParams');
-            const processForm = document.getElementById('processForm');
-            const processResultDiv = document.getElementById('processResult');
+    document.addEventListener('DOMContentLoaded', function() {
+        // --- Element References ---
+        const sidebarLinks = document.querySelectorAll('a.nav-link[data-target]');
+        const uploadCard = document.getElementById('upload-card');
+        const processingCard = document.getElementById('processing-card');
+        const cards = [uploadCard, processingCard];
 
-            // --- 1. 加载HDF5文件列表 ---
+        const uploadForm = document.getElementById('uploadForm');
+        const uploadResultDiv = document.getElementById('uploadResult');
+
+        const processForm = document.getElementById('processForm');
+        const hdf5FileSelect = document.getElementById('hdf5FileSelect');
+        const groupSelectContainer = document.getElementById('groupSelectContainer');
+        const groupSelect = document.getElementById('groupSelect');
+        const operationSelect = document.getElementById('operationSelect');
+        const dynamicParamsDiv = document.getElementById('dynamicParams');
+        const processResultDiv = document.getElementById('processResult');
+
+        // --- Sidebar Navigation Logic ---
+        sidebarLinks.forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+
+                // Hide all cards
+                cards.forEach(card => card.style.display = 'none');
+
+                // Show target card
+                const targetCard = document.querySelector(this.dataset.target);
+                if (targetCard) {
+                    targetCard.style.display = 'block';
+                }
+
+                // Manage active state
+                sidebarLinks.forEach(l => l.parentElement.classList.remove('active'));
+                this.parentElement.classList.add('active');
+            });
+        });
+
+        // --- Upload Form Logic ---
+        uploadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(uploadForm);
+            uploadResultDiv.innerHTML = '<div class="alert alert-info">正在上传并入库...</div>';
+
+            fetch('/upload', { method: 'POST', body: formData })
+                .then(response => response.text())
+                .then(result => {
+                    uploadResultDiv.innerHTML = `<div class="alert alert-success">${result}</div>`;
+                    // Refresh file list in the processing card
+                    loadHdf5Files(); 
+                })
+                .catch(error => {
+                    console.error('Upload error:', error);
+                    uploadResultDiv.innerHTML = '<div class="alert alert-danger">上传失败。</div>';
+                });
+        });
+
+        // --- Data Processing Logic ---
+
+        // Function to load HDF5 files into the select dropdown
+        function loadHdf5Files() {
             fetch('/api/hdf5_files')
                 .then(response => response.json())
                 .then(data => {
+                    hdf5FileSelect.innerHTML = '<option value="">请选择一个文件</option>';
                     data.forEach(file => {
                         const option = document.createElement('option');
                         option.value = file.id;
                         option.textContent = file.file_name;
                         hdf5FileSelect.appendChild(option);
                     });
-                })
-                .catch(error => {
-                    console.error('Error loading HDF5 files:', error);
-                    processResultDiv.innerHTML = '<div class="alert alert-danger">加载文件列表失败。</div>';
                 });
+        }
 
-            // --- 2. 文件选择事件：加载组列表 ---
-            hdf5FileSelect.addEventListener('change', function() {
-                const fileId = this.value;
-                groupSelect.innerHTML = '<option value="">请选择一个组</option>';
-                dynamicParamsDiv.innerHTML = ''; // 清空操作参数
+        // Initial load of HDF5 files
+        loadHdf5Files();
 
-                if (fileId) {
-                    groupSelectContainer.style.display = 'block';
-                    groupSelect.disabled = true;
-                    groupSelect.innerHTML = '<option value="">加载中...</option>';
-                    fetch(`/api/hdf5_groups/${fileId}`)
-                        .then(response => response.json())
-                        .then(data => {
-                            groupSelect.innerHTML = '<option value="">请选择一个组</option>';
-                            if (data.status === 'success' && data.data.length > 0) {
-                                data.data.forEach(group => {
-                                    const option = document.createElement('option');
-                                    option.value = group;
-                                    option.textContent = group;
-                                    groupSelect.appendChild(option);
-                                });
-                                groupSelect.disabled = false;
-                            } else {
-                                groupSelect.innerHTML = '<option value="">无可用组</option>';
-                            }
-                        })
-                        .catch(error => {
-                            console.error('Error fetching groups:', error);
-                            groupSelect.innerHTML = '<option value="">加载组失败</option>';
-                        });
-                } else {
-                    groupSelectContainer.style.display = 'none';
-                }
-                // 触发操作选择事件，以清空或重置操作界面
-                operationSelect.dispatchEvent(new Event('change'));
-            });
+        // File selection event: loads groups
+        hdf5FileSelect.addEventListener('change', function() {
+            const fileId = this.value;
+            groupSelect.innerHTML = '<option value="">请选择一个组</option>';
+            dynamicParamsDiv.innerHTML = '';
+            operationSelect.value = '';
 
-            // --- 3. 组选择事件：触发操作加载 ---
-            groupSelect.addEventListener('change', function() {
-                // 当组发生变化时，本质上是为操作参数的加载提供了新的上下文
-                // 因此，我们重新触发操作选择器的change事件，让它根据新的组去加载变量
-                operationSelect.dispatchEvent(new Event('change'));
-            });
-
-            // --- 4. 操作选择事件：加载动态参数 ---
-            operationSelect.addEventListener('change', function() {
-                dynamicParamsDiv.innerHTML = ''; // 清空现有参数
-                const fileId = hdf5FileSelect.value;
-                const groupPath = groupSelect.value;
-                const operation = this.value;
-
-                if (!fileId) return; // 如果没有选择文件，则不加载任何参数
-
-                if (operation === 'crop') {
-                    // 裁剪操作逻辑 (与组无关，但依赖文件)
-                    dynamicParamsDiv.innerHTML = `
-                        <div class="row">
-                            <div class="col-md-6"><label for="lat_min" class="form-label">最小纬度:</label><input type="number" step="any" class="form-control" id="lat_min" name="lat_min" required></div>
-                            <div class="col-md-6"><label for="lat_max" class="form-label">最大纬度:</label><input type="number" step="any" class="form-control" id="lat_max" name="lat_max" required></div>
-                        </div>
-                        <div class="row mt-2">
-                            <div class="col-md-6"><label for="lon_min" class="form-label">最小经度:</label><input type="number" step="any" class="form-control" id="lon_min" name="lon_min" required></div>
-                            <div class="col-md-6"><label for="lon_max" class="form-label">最大经度:</label><input type="number" step="any" class="form-control" id="lon_max" name="lon_max" required></div>
-                        </div>
-                    `;
-                    fetch(`/api/hdf5_file_latlon/${fileId}`)
-                        .then(response => response.json())
-                        .then(data => {
-                            if (data.status === 'success') {
-                                document.getElementById('lat_min').value = data.data.lat_min;
-                                document.getElementById('lat_max').value = data.data.lat_max;
-                                document.getElementById('lon_min').value = data.data.lon_min;
-                                document.getElementById('lon_max').value = data.data.lon_max;
-                            }
-                        });
-                } else if (operation === 'interpolate') {
-                    // 插值操作逻辑 (依赖文件和组)
-                    dynamicParamsDiv.innerHTML = `
-                        <div class="mb-3">
-                            <label for="var_name" class="form-label">变量名:</label>
-                            <select class="form-select" id="var_name" name="var_name" required><option value="">请先选择一个组</option></select>
-                        </div>
-                        <div class="mb-3"><label for="resolution" class="form-label">目标分辨率 (度):</label><input type="number" step="any" class="form-control" id="resolution" name="resolution" value="0.1" required></div>
-                        <div class="row"><div class="col-md-6"><label for="lat_min" class="form-label">最小纬度 (可选):</label><input type="number" step="any" class="form-control" id="lat_min" name="lat_min"></div><div class="col-md-6"><label for="lat_max" class="form-label">最大纬度 (可选):</label><input type="number" step="any" class="form-control" id="lat_max" name="lat_max"></div></div>
-                        <div class="row mt-2"><div class="col-md-6"><label for="lon_min" class="form-label">最小经度 (可选):</label><input type="number" step="any" class="form-control" id="lon_min" name="lon_min"></div><div class="col-md-6"><label for="lon_max" class="form-label">最大经度 (可选):</label><input type="number" step="any" class="form-control" id="lon_max" name="lon_max"></div></div>
-                        <div class="row mt-2"><div class="col-md-6"><label for="layer_min" class="form-label">起始层索引 (可选):</label><input type="number" step="1" class="form-control" id="layer_min" name="layer_min"></div><div class="col-md-6"><label for="layer_max" class="form-label">结束层索引 (可选):</label><input type="number" step="1" class="form-control" id="layer_max" name="layer_max"></div></div>
-                    `;
-                    if (groupPath) {
-                        const varNameSelect = document.getElementById('var_name');
-                        varNameSelect.disabled = true;
-                        varNameSelect.innerHTML = '<option value="">加载中...</option>';
-                        fetch(`/api/hdf5_variables/${fileId}?group=${encodeURIComponent(groupPath)}`)
-                            .then(response => response.json())
-                            .then(data => {
-                                varNameSelect.innerHTML = ''; // Clear
-                                if (data.status === 'success' && data.data.length > 0) {
-                                    data.data.forEach(variable => {
-                                        const option = document.createElement('option');
-                                        option.value = variable;
-                                        option.textContent = variable;
-                                        varNameSelect.appendChild(option);
-                                    });
-                                    varNameSelect.disabled = false;
-                                } else {
-                                    varNameSelect.innerHTML = '<option value="">该组无变量</option>';
-                                }
-                            })
-                            .catch(error => {
-                                console.error('Error fetching variables:', error);
-                                varNameSelect.innerHTML = '<option value="">加载变量失败</option>';
+            if (fileId) {
+                groupSelectContainer.style.display = 'block';
+                groupSelect.disabled = true;
+                groupSelect.innerHTML = '<option value="">加载中...</option>';
+                fetch(`/api/hdf5_groups/${fileId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        groupSelect.innerHTML = '<option value="">请选择一个组</option>';
+                        if (data.status === 'success' && data.data.length > 0) {
+                            data.data.forEach(group => {
+                                const option = document.createElement('option');
+                                option.value = group;
+                                option.textContent = group;
+                                groupSelect.appendChild(option);
                             });
-                    }
-                }
-            });
+                            groupSelect.disabled = false;
+                        } else {
+                            groupSelect.innerHTML = '<option value="">无可用组</option>';
+                        }
+                    });
+            } else {
+                groupSelectContainer.style.display = 'none';
+            }
+        });
 
-            // --- 5. 表单提交逻辑 (与之前类似，但现在包含了group_path) ---
-            processForm.addEventListener('submit', function(event) {
-                event.preventDefault();
-                const formData = new FormData(processForm);
-                const data = {};
-                for (let [key, value] of formData.entries()) {
+        // Group selection event: triggers operation change to load variables
+        groupSelect.addEventListener('change', () => operationSelect.dispatchEvent(new Event('change')));
+
+        // Operation selection event: loads dynamic parameters
+        operationSelect.addEventListener('change', function() {
+            dynamicParamsDiv.innerHTML = '';
+            const fileId = hdf5FileSelect.value;
+            const groupPath = groupSelect.value;
+            const operation = this.value;
+
+            if (!fileId) return;
+
+            if (operation === 'crop') {
+                dynamicParamsDiv.innerHTML = `
+                    <div class="row">
+                        <div class="col-md-6"><label for="lat_min" class="form-label">最小纬度:</label><input type="number" step="any" class="form-control" id="lat_min" name="lat_min" required></div>
+                        <div class="col-md-6"><label for="lat_max" class="form-label">最大纬度:</label><input type="number" step="any" class="form-control" id="lat_max" name="lat_max" required></div>
+                    </div>
+                    <div class="row mt-2">
+                        <div class="col-md-6"><label for="lon_min" class="form-label">最小经度:</label><input type="number" step="any" class="form-control" id="lon_min" name="lon_min" required></div>
+                        <div class="col-md-6"><label for="lon_max" class="form-label">最大经度:</label><input type="number" step="any" class="form-control" id="lon_max" name="lon_max" required></div>
+                    </div>
+                `;
+                fetch(`/api/hdf5_file_latlon/${fileId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            document.getElementById('lat_min').value = data.data.lat_min;
+                            document.getElementById('lat_max').value = data.data.lat_max;
+                            document.getElementById('lon_min').value = data.data.lon_min;
+                            document.getElementById('lon_max').value = data.data.lon_max;
+                        }
+                    });
+            } else if (operation === 'interpolate') {
+                dynamicParamsDiv.innerHTML = `
+                    <div class="mb-3">
+                        <label for="var_name" class="form-label">变量名:</label>
+                        <select class="form-select" id="var_name" name="var_name" required><option value="">请先选择一个组</option></select>
+                    </div>
+                    <div class="mb-3"><label for="resolution" class="form-label">目标分辨率 (度):</label><input type="number" step="any" class="form-control" id="resolution" name="resolution" value="0.1" required></div>
+                    <p class="text-muted small">其他参数（如经纬度范围、层数范围）均为可选。</p>
+                    <!-- Optional params can be added here if needed -->
+                `;
+                if (groupPath) {
+                    const varNameSelect = document.getElementById('var_name');
+                    varNameSelect.disabled = true;
+                    varNameSelect.innerHTML = '<option value="">加载中...</option>';
+                    fetch(`/api/hdf5_variables/${fileId}?group=${encodeURIComponent(groupPath)}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            varNameSelect.innerHTML = '';
+                            if (data.status === 'success' && data.data.length > 0) {
+                                data.data.forEach(variable => {
+                                    const option = document.createElement('option');
+                                    option.value = variable;
+                                    option.textContent = variable;
+                                    varNameSelect.appendChild(option);
+                                });
+                                varNameSelect.disabled = false;
+                            } else {
+                                varNameSelect.innerHTML = '<option value="">该组无变量</option>';
+                            }
+                        });
+                }
+            }
+        });
+
+        // Form submission logic
+        processForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            const formData = new FormData(processForm);
+            const data = {};
+            for (let [key, value] of formData.entries()) {
+                if (value) { // Only include non-empty values
                     data[key] = value;
                 }
+            }
 
-                let apiUrl = '';
-                if (data.operation === 'crop') {
-                    apiUrl = '/api/crop';
-                } else if (data.operation === 'interpolate') {
-                    apiUrl = '/api/interpolate';
-                }
+            const apiUrl = data.operation ? `/api/${data.operation}` : '';
 
-                if (apiUrl) {
-                    processResultDiv.innerHTML = '<div class="alert alert-info">正在处理，请稍候...</div>';
-                    fetch(apiUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(data)
-                    })
-                    .then(response => response.json())
-                    .then(result => {
-                        if (result.status === 'success' && result.task_id) {
-                            processResultDiv.innerHTML = `<div class="alert alert-info">${result.message} 任务ID: ${result.task_id}</div>`;
-                            const taskId = result.task_id;
-                            const pollInterval = setInterval(() => {
-                                fetch(`/api/status/${taskId}`)
-                                    .then(res => res.json())
-                                    .then(statusData => {
-                                        if (statusData.status === 'COMPLETED') {
-                                            clearInterval(pollInterval);
-                                            const downloadLink = `<a href="/download/${taskId}" class="btn btn-success mt-2">下载结果文件</a>`;
-                                            processResultDiv.innerHTML = `<div class="alert alert-success">任务完成！ ${downloadLink}</div>`;
-                                        } else if (statusData.status === 'FAILED') {
-                                            clearInterval(pollInterval);
-                                            processResultDiv.innerHTML = `<div class="alert alert-danger">任务失败: ${statusData.message}</div>`;
-                                        } else {
-                                            processResultDiv.innerHTML = `<div class="alert alert-info">${statusData.message}</div>`;
-                                        }
-                                    })
-                                    .catch(error => {
-                                        clearInterval(pollInterval);
-                                        processResultDiv.innerHTML = '<div class="alert alert-danger">查询任务状态失败。</div>';
-                                    });
-                            }, 3000);
-                        } else {
-                            processResultDiv.innerHTML = `<div class="alert alert-danger">${result.message || '提交任务失败。'}</div>`;
-                        }
-                    })
-                    .catch(error => {
-                        processResultDiv.innerHTML = '<div class="alert alert-danger">处理请求失败。</div>';
-                    });
-                }
-            });
+            if (apiUrl) {
+                processResultDiv.innerHTML = '<div class="alert alert-info">正在处理，请稍候...</div>';
+                fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                })
+                .then(response => response.json())
+                .then(result => {
+                    if (result.status === 'success' && result.task_id) {
+                        processResultDiv.innerHTML = `<div class="alert alert-info">${result.message} 任务ID: ${result.task_id}</div>`;
+                        pollTaskStatus(result.task_id);
+                    } else {
+                        processResultDiv.innerHTML = `<div class="alert alert-danger">${result.message || '提交任务失败。'}</div>`;
+                    }
+                });
+            }
         });
+
+        function pollTaskStatus(taskId) {
+            const pollInterval = setInterval(() => {
+                fetch(`/api/status/${taskId}`)
+                    .then(res => res.json())
+                    .then(statusData => {
+                        if (statusData.status === 'COMPLETED') {
+                            clearInterval(pollInterval);
+                            const downloadLink = `<a href="/download/${taskId}" class="btn btn-success mt-2">下载结果文件</a>`;
+                            processResultDiv.innerHTML = `<div class="alert alert-success">任务完成！ ${downloadLink}</div>`;
+                        } else if (statusData.status === 'FAILED') {
+                            clearInterval(pollInterval);
+                            processResultDiv.innerHTML = `<div class="alert alert-danger">任务失败: ${statusData.message}</div>`;
+                        } else {
+                            processResultDiv.innerHTML = `<div class="alert alert-info">${statusData.message}</div>`;
+                        }
+                    });
+            }, 3000);
+        }
+    });
     </script>
+
 </body>
+
 </html>
