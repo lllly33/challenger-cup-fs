@@ -3,27 +3,119 @@ import numpy as np
 import h5py
 import os
 import time
+import psycopg2
+import traceback
 from scipy.spatial import cKDTree
 from tqdm import tqdm
 from joblib import Parallel, delayed
 
+# --- 数据库连接参数 ---
+DB_HOST = "localhost"
+DB_NAME = "juicefs"
+DB_USER = "juiceuser"
+DB_PASSWORD = "0333"
+
+# --- 插值算法参数 ---
+CUSTOM_MISSING = -9999.9
+MAX_NEIGHBORS = 10
+MIN_NEIGHBORS = 3
+POWER = 2
+MAX_DISTANCE = 0.5
+BLOCK_SIZE = 128
+MAX_POINTS_PER_BLOCK = 50000
+PARALLEL = True
+NUM_CORES = -1
 
 
+DB_PATH_PREFIX = '/mnt/jfs/'
+LOCAL_MOUNT_POINT = '/mnt/myjfs/'
 
 
+def _get_paths_from_db(file_id: int, var_name: str):
+    """从数据库查询文件路径、变量路径和经纬度路径"""
+    conn = None
+    try:
+        conn = psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
+        cur = conn.cursor()
 
-def read_hdf5_data(file_path, var_name):
-    print(f"读取文件: {file_path}，变量: {var_name}")
+        # 1. 获取文件物理路径
+        cur.execute("SELECT file_path FROM hdf5_files WHERE id = %s;", (file_id,))
+        file_record = cur.fetchone()
+        if not file_record:
+            raise ValueError(f"未找到文件ID为 {file_id} 的记录")
+        file_path = file_record[0]
+
+        # 将数据库中的路径转换为本地可访问的路径
+        file_path = file_path.replace(DB_PATH_PREFIX, LOCAL_MOUNT_POINT)
+
+        # 2. 获取目标变量的完整路径
+        cur.execute("SELECT full_path, parent_path FROM hdf5_datasets WHERE file_id = %s AND name = %s LIMIT 1;", (file_id, var_name))
+        var_record = cur.fetchone()
+        if not var_record:
+            raise ValueError(f"在文件ID {file_id} 中未找到变量名 '{var_name}'")
+        data_full_path, data_parent_path = var_record
+
+        # 3. 智能推断经纬度路径
+        lat_path, lon_path = None, None
+        # 优先在同级目录下查找
+        cur.execute("""
+            SELECT name, full_path FROM hdf5_datasets
+            WHERE file_id = %s AND parent_path = %s AND (name ILIKE '%%lat%%' OR name ILIKE '%%latitude%%')
+            LIMIT 1;
+        """, (file_id, data_parent_path))
+        lat_record = cur.fetchone()
+        if lat_record:
+            lat_path = lat_record[1]
+
+        cur.execute("""
+            SELECT name, full_path FROM hdf5_datasets
+            WHERE file_id = %s AND parent_path = %s AND (name ILIKE '%%lon%%' OR name ILIKE '%%longitude%%')
+            LIMIT 1;
+        """, (file_id, data_parent_path))
+        lon_record = cur.fetchone()
+        if lon_record:
+            lon_path = lon_record[1]
+
+        # 如果同级找不到，则在全文件中查找
+        if not lat_path:
+            cur.execute("SELECT full_path FROM hdf5_datasets WHERE file_id = %s AND (name ILIKE '%%lat%%' OR name ILIKE '%%latitude%%') LIMIT 1;", (file_id,))
+            lat_record = cur.fetchone()
+            if lat_record: lat_path = lat_record[0]
+
+        if not lon_path:
+            cur.execute("SELECT full_path FROM hdf5_datasets WHERE file_id = %s AND (name ILIKE '%%lon%%' OR name ILIKE '%%longitude%%') LIMIT 1;", (file_id,))
+            lon_record = cur.fetchone()
+            if lon_record: lon_path = lon_record[0]
+
+        if not lat_path or not lon_path:
+            raise ValueError(f"无法为文件ID {file_id} 自动推断经纬度变量路径")
+
+        print(f"[INFO] DB Paths: file='{file_path}', data='{data_full_path}', lat='{lat_path}', lon='{lon_path}'")
+        return file_path, data_full_path, lat_path, lon_path
+
+    finally:
+        if conn:
+            cur.close()
+            conn.close()
+
+
+def read_hdf5_data(file_path, data_path, lat_path, lon_path):
+    """使用动态路径读取HDF5数据"""
+    print(f"读取文件: {file_path}")
     with h5py.File(file_path, 'r') as f:
-        longitude = f['FS/Longitude'][:].astype(np.float32)
-        latitude = f['FS/Latitude'][:].astype(np.float32)
-        data = f[f'FS/VER/{var_name}'][:].astype(np.float32)
+        longitude = f[lon_path][:].astype(np.float32)
+        latitude = f[lat_path][:].astype(np.float32)
+        data = f[data_path][:].astype(np.float32)
 
-    # 维度校验（支持二维和三维）
+    # 维度校验
     assert longitude.shape == latitude.shape, "经纬度维度不匹配"
     assert len(data.shape) in (2, 3), f"变量必须为二维或三维，实际形状: {data.shape}"
-    assert data.shape[0:2] == longitude.shape, "变量前两维与经纬度不匹配"
-
+    
+    # 对于GPM等数据，数据的前两维通常与经纬度匹配
+    if data.shape[:2] != longitude.shape:
+        print(f"[WARNING] 变量维度 {data.shape} 与经纬度维度 {longitude.shape} 前两维不匹配。请检查数据结构。")
+        # 这里可以根据需要添加更复杂的维度匹配逻辑
+        
     # 二维变量转为三维单一层格式
     if len(data.shape) == 2:
         print(f"检测到二维变量，自动转换为单一层格式 (添加维度)")
@@ -40,7 +132,6 @@ def preprocess_data(longitude, latitude, data, lon_min_arg=None, lon_max_arg=Non
 
     # 三维变量的层范围过滤
     if total_layers > 1:  # 仅对三维变量生效
-        # 处理层索引边界
         if layer_min is not None:
             layer_min = max(0, min(layer_min, total_layers - 1))
         else:
@@ -50,78 +141,48 @@ def preprocess_data(longitude, latitude, data, lon_min_arg=None, lon_max_arg=Non
         else:
             layer_max = total_layers - 1
 
-        # 截取指定范围的层
         filled_data = filled_data[:, :, layer_min:layer_max + 1]
-        total_layers = filled_data.shape[2]  # 更新层数
+        total_layers = filled_data.shape[2]
         print(f"三维变量层范围过滤：保留第{layer_min}至{layer_max}层，共{total_layers}层")
 
-    rows, cols = longitude.shape
-
     # 经纬度有效性校验
-    lon_valid = ~np.isnan(longitude) & ~np.isinf(longitude) & \
-                (longitude >= -180) & (longitude <= 180)
-    lat_valid = ~np.isnan(latitude) & ~np.isinf(latitude) & \
-                (latitude >= -90) & (latitude <= 90)
+    lon_valid = ~np.isnan(longitude) & (longitude >= -180) & (longitude <= 180)
+    lat_valid = ~np.isnan(latitude) & (latitude >= -90) & (latitude <= 90)
     coord_valid = lon_valid & lat_valid
-    print(f"经纬度有效点数量: {np.sum(coord_valid)}")
-
-    # 样本层缺失值统计
-    sample_layer = filled_data[:, :, 0]
-    valid_sample = sample_layer[coord_valid]
-    print(f"样本层缺失值数量: {np.sum(valid_sample == CUSTOM_MISSING)}")
 
     global_valid = coord_valid.copy()
-    total_missing = 0
-
-    # 逐层处理缺失值（仅处理过滤后的层）
+    
+    # 逐层处理缺失值
     for layer in range(total_layers):
         data_layer = filled_data[:, :, layer]
-        missing_mask = (data_layer == CUSTOM_MISSING) | np.isnan(data_layer) | np.isinf(data_layer)
+        missing_mask = (data_layer == CUSTOM_MISSING) | np.isnan(data_layer)
         missing_mask &= coord_valid
-        missing_count = np.sum(missing_mask)
-
-        if layer % 10 == 0:
-            print(f"层 {layer + 1}/{total_layers} 缺失值: {missing_count}")
-
-        if missing_count > 0:
-            total_missing += missing_count
+        
+        if np.sum(missing_mask) > 0:
             valid_mask = ~missing_mask & coord_valid
-            valid_lon = longitude[valid_mask]
-            valid_lat = latitude[valid_mask]
-            valid_data = data_layer[valid_mask]
+            valid_lon_layer = longitude[valid_mask]
+            valid_lat_layer = latitude[valid_mask]
+            valid_data_layer = data_layer[valid_mask]
 
-            if len(valid_data) < 5:
-                print(f"警告：层 {layer} 有效点不足，使用均值填补")
-                layer_mean = np.nanmean(data_layer[coord_valid])
-                data_layer[missing_mask] = layer_mean
-                filled_data[:, :, layer] = data_layer
-                global_valid &= ~missing_mask
-                continue
-
-            # IDW插值填补（不变）
-            tree = cKDTree(np.column_stack((valid_lon, valid_lat)))
-            missing_points = np.column_stack((longitude[missing_mask], latitude[missing_mask]))
-            distances, indices = tree.query(missing_points, k=min(MAX_NEIGHBORS, len(valid_data)),
-                                            distance_upper_bound=MAX_DISTANCE)
-
-            for i, (row, col) in enumerate(np.argwhere(missing_mask)):
-                if np.isscalar(distances[i]):
+            if len(valid_data_layer) >= MIN_NEIGHBORS:
+                tree = cKDTree(np.column_stack((valid_lon_layer, valid_lat_layer)))
+                missing_points = np.column_stack((longitude[missing_mask], latitude[missing_mask]))
+                distances, indices = tree.query(missing_points, k=min(MAX_NEIGHBORS, len(valid_data_layer)), distance_upper_bound=MAX_DISTANCE)
+                
+                interpolated_values = np.full(missing_points.shape[0], CUSTOM_MISSING, dtype=np.float32)
+                for i in range(len(missing_points)):
                     valid_nb = distances[i] < MAX_DISTANCE
-                else:
-                    valid_nb = distances[i] < MAX_DISTANCE
-
-                if np.sum(valid_nb) >= MIN_NEIGHBORS:
-                    if np.isscalar(distances[i]):
-                        data_layer[row, col] = valid_data[indices[i]]
-                    else:
+                    if np.isscalar(distances[i]): # k=1
+                        if valid_nb:
+                            interpolated_values[i] = valid_data_layer[indices[i]]
+                    elif np.sum(valid_nb) >= MIN_NEIGHBORS:
                         weights = 1.0 / (distances[i][valid_nb] ** POWER)
                         weights /= weights.sum()
-                        data_layer[row, col] = np.sum(valid_data[indices[i][valid_nb]] * weights)
-                else:
-                    data_layer[row, col] = np.nanmean(valid_data)
-
-            filled_data[:, :, layer] = data_layer
-            global_valid &= ~missing_mask
+                        interpolated_values[i] = np.sum(valid_data_layer[indices[i][valid_nb]] * weights)
+                
+                data_layer[missing_mask] = interpolated_values
+                filled_data[:, :, layer] = data_layer
+                global_valid &= ~(missing_mask & (interpolated_values == CUSTOM_MISSING))
 
     # 提取有效数据与范围
     valid_lon = longitude[global_valid]
@@ -134,60 +195,40 @@ def preprocess_data(longitude, latitude, data, lon_min_arg=None, lon_max_arg=Non
     lat_min, lat_max = valid_lat.min(), valid_lat.max()
 
     # 应用用户指定经纬度范围
-    if lon_min_arg is not None:
-        lon_min = max(lon_min_arg, -180.0)
-        mask = valid_lon >= lon_min
-        valid_lon, valid_lat = valid_lon[mask], valid_lat[mask]
-        valid_data_layers = [l[mask] for l in valid_data_layers]
-    if lon_max_arg is not None:
-        lon_max = min(lon_max_arg, 180.0)
-        mask = valid_lon <= lon_max
-        valid_lon, valid_lat = valid_lon[mask], valid_lat[mask]
-        valid_data_layers = [l[mask] for l in valid_data_layers]
-    if lat_min_arg is not None:
-        lat_min = max(lat_min_arg, -90.0)
-        mask = valid_lat >= lat_min
-        valid_lon, valid_lat = valid_lon[mask], valid_lat[mask]
-        valid_data_layers = [l[mask] for l in valid_data_layers]
-    if lat_max_arg is not None:
-        lat_max = min(lat_max_arg, 90.0)
-        mask = valid_lat <= lat_max
-        valid_lon, valid_lat = valid_lon[mask], valid_lat[mask]
-        valid_data_layers = [l[mask] for l in valid_data_layers]
+    if lon_min_arg is not None: lon_min = max(lon_min_arg, -180.0)
+    if lon_max_arg is not None: lon_max = min(lon_max_arg, 180.0)
+    if lat_min_arg is not None: lat_min = max(lat_min_arg, -90.0)
+    if lat_max_arg is not None: lat_max = min(lat_max_arg, 90.0)
 
-    # 检查过滤后是否还有数据
+    final_mask = (valid_lon >= lon_min) & (valid_lon <= lon_max) & (valid_lat >= lat_min) & (valid_lat <= lat_max)
+    valid_lon, valid_lat = valid_lon[final_mask], valid_lat[final_mask]
+    valid_data_layers = [l[final_mask] for l in valid_data_layers]
+
     if len(valid_lon) == 0:
-        raise ValueError(f"指定的经纬度范围 (lon: [{lon_min_arg}, {lon_max_arg}], lat: [{lat_min_arg}, {lat_max_arg}]) 内没有找到任何有效的数据点。请尝试更大的范围或不设置范围。")
+        raise ValueError(f"指定的经纬度范围 (lon: [{lon_min_arg}, {lon_max_arg}], lat: [{lat_min_arg}, {lat_max_arg}]) 内没有找到任何有效的数据点。")
 
-    print(f"预处理耗时: {time.time() - start:.2f}秒，总缺失值: {total_missing}")
+    print(f"预处理耗时: {time.time() - start:.2f}秒")
     return valid_lon, valid_lat, valid_data_layers, lon_min, lon_max, lat_min, lat_max, total_layers
 
 
 def create_interpolation_grid(lon_min, lon_max, lat_min, lat_max, resolution):
-    lon_min = max(lon_min, -180.0)
-    lon_max = min(lon_max, 180.0)
-    lat_min = max(lat_min, -90.0)
-    lat_max = min(lat_max, 90.0)
-    margin = max(resolution * 2, 0.1)
-    grid_lon = np.arange(lon_min - margin, lon_max + margin, resolution)
-    grid_lat = np.arange(lat_min - margin, lat_max + margin, resolution)
+    grid_lon = np.arange(lon_min, lon_max, resolution)
+    grid_lat = np.arange(lat_min, lat_max, resolution)
     print(f"插值网格规模: {len(grid_lon)}x{len(grid_lat)} = {len(grid_lon) * len(grid_lat):,}点")
     return grid_lon, grid_lat
 
 
 def idw_interpolation(lon_valid, lat_valid, data_valid, query_points):
-    if len(lon_valid) == 0:
+    if len(lon_valid) < MIN_NEIGHBORS:
         return np.full(len(query_points), CUSTOM_MISSING, dtype=np.float32)
 
     tree = cKDTree(np.column_stack((lon_valid, lat_valid)))
-    distances, indices = tree.query(query_points, k=min(MAX_NEIGHBORS, len(lon_valid)),
-                                    distance_upper_bound=MAX_DISTANCE)
+    distances, indices = tree.query(query_points, k=min(MAX_NEIGHBORS, len(lon_valid)), distance_upper_bound=MAX_DISTANCE)
     result = np.full(len(query_points), CUSTOM_MISSING, dtype=np.float32)
 
     for i in range(len(query_points)):
         if np.isscalar(distances[i]):
-            if distances[i] < MAX_DISTANCE:
-                result[i] = data_valid[indices[i]]
+            if distances[i] < MAX_DISTANCE: result[i] = data_valid[indices[i]]
             continue
 
         valid_nb = distances[i] < MAX_DISTANCE
@@ -195,9 +236,6 @@ def idw_interpolation(lon_valid, lat_valid, data_valid, query_points):
             weights = 1.0 / (distances[i][valid_nb] ** POWER)
             weights /= weights.sum()
             result[i] = np.sum(data_valid[indices[i][valid_nb]] * weights)
-        else:
-            result[i] = np.nanmean(data_valid)
-
     return result
 
 
@@ -213,37 +251,21 @@ def process_block(args):
                (lat_valid >= lat_block.min() - MAX_DISTANCE) & (lat_valid <= lat_block.max() + MAX_DISTANCE)
 
     if np.sum(in_range) < MIN_NEIGHBORS:
-        tree = cKDTree(np.column_stack((lon_valid, lat_valid)))
-        _, indices = tree.query(query_points, k=1)
-        return data_valid[indices].reshape(block_shape), i_start, i_end, j_start, j_end
+        return np.full(block_shape, CUSTOM_MISSING, dtype=np.float32), i_start, i_end, j_start, j_end
 
-    lon_in_range = lon_valid[in_range]
-    lat_in_range = lat_valid[in_range]
-    data_in_range = data_valid[in_range]
-
-    if len(query_points) > MAX_POINTS_PER_BLOCK:
-        sub_results = []
-        for q_start in range(0, len(query_points), MAX_POINTS_PER_BLOCK):
-            q_end = min(q_start + MAX_POINTS_PER_BLOCK, len(query_points))
-            sub_results.append(
-                idw_interpolation(lon_in_range, lat_in_range, data_in_range, query_points[q_start:q_end]))
-        result_flat = np.concatenate(sub_results)
-    else:
-        result_flat = idw_interpolation(lon_in_range, lat_in_range, data_in_range, query_points)
-
+    result_flat = idw_interpolation(lon_valid[in_range], lat_valid[in_range], data_valid[in_range], query_points)
     return result_flat.reshape(block_shape), i_start, i_end, j_start, j_end
 
 
 def batch_idw(lon_valid, lat_valid, data_valid, grid_lon, grid_lat, layer_idx):
-    print(f"\n===== 插值层 {layer_idx + 1} =====")
+    print(f"\\n===== 插值层 {layer_idx + 1} =====")
     start = time.time()
     blocks = []
     for i in range(0, len(grid_lat), BLOCK_SIZE):
         i_end = min(i + BLOCK_SIZE, len(grid_lat))
         for j in range(0, len(grid_lon), BLOCK_SIZE):
             j_end = min(j + BLOCK_SIZE, len(grid_lon))
-            blocks.append((f"block_{i // BLOCK_SIZE}_{j // BLOCK_SIZE}",
-                           lon_valid, lat_valid, data_valid, grid_lon, grid_lat, i, i_end, j, j_end))
+            blocks.append((f"block_{i//BLOCK_SIZE}_{j//BLOCK_SIZE}", lon_valid, lat_valid, data_valid, grid_lon, grid_lat, i, i_end, j, j_end))
 
     result = np.full((len(grid_lat), len(grid_lon)), CUSTOM_MISSING, dtype=np.float32)
     if PARALLEL and len(blocks) > 1:
@@ -268,65 +290,21 @@ def save_to_hdf5(output_path, grid_lon, grid_lat, all_results, total_layers, var
         grp.create_dataset('longitude', data=grid_lon)
         grp.create_dataset('latitude', data=grid_lat)
 
-        # 根据原始维度和实际结果形状设置动态分块
         if original_dim == 2 and total_layers == 1:
-            # 二维结果：形状为 (纬度数, 经度数)
-            lat_size = len(grid_lat)
-            lon_size = len(grid_lon)
-            # 分块不超过实际维度（取BLOCK_SIZE与实际维度的最小值）
-            chunk_lat = min(BLOCK_SIZE, lat_size)
-            chunk_lon = min(BLOCK_SIZE, lon_size)
-            dset = grp.create_dataset(
-                var_name,
-                shape=(lat_size, lon_size),
-                dtype=np.float32,
-                chunks=(chunk_lat, chunk_lon),  # 动态分块
-                compression='gzip',
-                compression_opts=3
-            )
-            dset[:] = all_results[0]
+            dset = grp.create_dataset(var_name, data=all_results[0], compression='gzip', compression_opts=3)
         else:
-            # 三维结果：形状为 (层数, 纬度数, 经度数)
-            lat_size = len(grid_lat)
-            lon_size = len(grid_lon)
-            # 分块在每个维度上取BLOCK_SIZE与实际维度的最小值
-            chunk_layer = 1  # 层数分块固定为1（避免跨层合并）
-            chunk_lat = min(BLOCK_SIZE, lat_size)
-            chunk_lon = min(BLOCK_SIZE, lon_size)
-            dset = grp.create_dataset(
-                var_name,
-                shape=(total_layers, lat_size, lon_size),
-                dtype=np.float32,
-                chunks=(chunk_layer, chunk_lat, chunk_lon),  # 动态分块
-                compression='gzip',
-                compression_opts=3
-            )
-            for i, res in enumerate(tqdm(all_results, desc="写入数据")):
-                dset[i] = res
-
-        # 元数据保持不变
-        grp.attrs['missing_value'] = CUSTOM_MISSING
+            dset = grp.create_dataset(var_name, data=np.array(all_results), compression='gzip', compression_opts=3)
+        
+        dset.attrs['missing_value'] = CUSTOM_MISSING
         grp.attrs['grid_resolution'] = resolution
         grp.attrs['variable_name'] = var_name
         grp.attrs['original_dimension'] = original_dim
         if original_dim == 3:
             grp.attrs['layers_processed'] = f"{layer_min_arg or 0}-{layer_max_arg or (total_layers-1)}"
 
-def generate_report(total_valid, total_points, total_layers, var_name, original_dim, output_file, resolution, layer_min_arg, layer_max_arg):
-    coverage = 100 * total_valid / total_points if total_points else 0
-    print("\n" + "=" * 60)
-    print("                  插值完成报告")
-    print("=" * 60)
-    print(f"变量名: {var_name}")
-    print(f"原始维度: {original_dim}D，处理层数: {total_layers}")
-    if original_dim == 3 and (layer_min_arg is not None or layer_max_arg is not None):
-        print(f"层范围: {layer_min_arg or 0}至{layer_max_arg or (total_layers - 1)}")
-    print(f"总覆盖率: {coverage:.2f}%")
-    print(f"结果文件: {output_file}")
-    print("=" * 60)
 
 def run_interpolation(
-    input_file: str,
+    file_id: int,
     var_name: str,
     resolution: float = 0.1,
     output_dir: str = None,
@@ -335,48 +313,28 @@ def run_interpolation(
     lat_min: float = None,
     lat_max: float = None,
     layer_min: int = None,
-    layer_max: int = None,
-    info_only: bool = False
+    layer_max: int = None
 ):
     try:
+        start = time.time()
+        # 从数据库获取路径
+        file_path, data_path, lat_path, lon_path = _get_paths_from_db(file_id, var_name)
+
         # 输出路径设置
-        output_dir = output_dir if output_dir else os.path.dirname(input_file)
+        output_dir = output_dir if output_dir else os.path.dirname(file_path)
         os.makedirs(output_dir, exist_ok=True)
         output_file = os.path.join(
             output_dir,
-            f"{os.path.splitext(os.path.basename(input_file))[0]}_{var_name}_processed.h5"
+            f"{os.path.splitext(os.path.basename(file_path))[0]}_{var_name}_interpolated.h5"
         )
 
-        if info_only:
-            print("--- 文件信息查询模式 ---")
-            lon, lat, data = read_hdf5_data(input_file, var_name)
-            valid_lon, valid_lat, _, lon_min_res, lon_max_res, lat_min_res, lat_max_res, total_layers = preprocess_data(
-                lon, lat, data
-            )
-            print("\n" + "=" * 60)
-            print(f"文件: {os.path.basename(input_file)}")
-            print(f"变量: {var_name}")
-            print(f"数据总层数: {data.shape[2]}")
-            print(f"有效数据点覆盖范围:")
-            print(f"  经度 (Lon): {lon_min_res:.2f} 到 {lon_max_res:.2f}")
-            print(f"  纬度 (Lat): {lat_min_res:.2f} 到 {lat_max_res:.2f}")
-            print("=" * 60)
-            return output_file # Return output_file even in info_only mode for consistency
-
-        start = time.time()
         # 读取数据
-        lon, lat, data = read_hdf5_data(input_file, var_name)
+        lon, lat, data = read_hdf5_data(file_path, data_path, lat_path, lon_path)
         original_dim = 2 if data.shape[2] == 1 else 3
 
-        # 预处理（传入层范围参数）
+        # 预处理
         valid_lon, valid_lat, data_layers, lon_min_res, lon_max_res, lat_min_res, lat_max_res, total_layers = preprocess_data(
-            lon, lat, data,
-            lon_min_arg=lon_min,
-            lon_max_arg=lon_max,
-            lat_min_arg=lat_min,
-            lat_max_arg=lat_max,
-            layer_min=layer_min,  # 传入起始层
-            layer_max=layer_max  # 传入结束层
+            lon, lat, data, lon_min, lon_max, lat_min, lat_max, layer_min, layer_max
         )
 
         # 创建插值网格
@@ -384,25 +342,17 @@ def run_interpolation(
 
         # 批量插值
         all_results = []
-        total_valid, total_points = 0, 0
         for i, layer in enumerate(tqdm(data_layers, desc="总进度")):
-            res, valid, total = batch_idw(valid_lon, valid_lat, layer, grid_lon, grid_lat, i)
+            res, _, _ = batch_idw(valid_lon, valid_lat, layer, grid_lon, grid_lat, i)
             all_results.append(res)
-            total_valid += valid
-            total_points += total
-            del res
 
         # 保存结果
         save_to_hdf5(output_file, grid_lon, grid_lat, all_results, total_layers, var_name, original_dim, resolution, layer_min, layer_max)
 
-        # 生成报告
-        generate_report(total_valid, total_points, total_layers, var_name, original_dim, output_file, resolution, layer_min, layer_max)
-        print(f"总耗时: {time.time() - start:.2f}秒")
+        print(f"\\n总耗时: {time.time() - start:.2f}秒")
         return output_file
 
     except Exception as e:
         print(f"错误: {e}")
-        import traceback
         traceback.print_exc()
         return None
-

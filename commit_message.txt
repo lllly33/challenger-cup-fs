@@ -1,0 +1,11 @@
+feat: 实现HDF5插值功能
+
+本次提交为Web平台引入了HDF5插值功能。
+
+主要变更包括：
+- 重构了 `src/interpolation/main_new.py`，将其核心插值逻辑封装为可复用函数。
+- 将插值函数集成到 `src/api_service.py` 中，并创建了 `perform_interpolation` 函数。
+- 在 `app.py` 中添加了新的 `/api/interpolate` API路由，用于处理插值请求。
+- 增强了 `templates/index.html`，以支持插值操作，包括变量和参数的动态输入字段。
+- 更新了 `src/api_service.py` 中的变量获取逻辑，使其能根据HDF5文件的实际路径（FS/ 或 HS/）正确检索变量。
+- 将 `src/interpolation/main-new.py` 重命名为 `src/interpolation/main_new.py`，以解决模块导入问题。

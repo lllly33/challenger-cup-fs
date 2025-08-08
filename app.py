@@ -2,8 +2,9 @@ from flask import Flask, render_template, request, send_file
 import os
 import uuid
 import shutil
+from datetime import datetime # 导入 datetime 模块
 from src.write.writehdf5 import parse_and_store_hdf5_metadata
-from src.api_service import get_hdf5_files_from_db, get_hdf5_latlon_data, find_and_crop_hdf5, get_hdf5_variables_from_db
+from src.api_service import get_hdf5_files_from_db, get_hdf5_latlon_data, find_and_crop_hdf5, get_hdf5_variables_from_db, get_hdf5_groups_from_db
 from flask import jsonify # 导入 jsonify
 from multiprocessing import Process, Manager, Queue # 导入 multiprocessing 模块
 import time
@@ -101,16 +102,20 @@ def get_file_latlon(file_id):
     else:
         return jsonify({"status": "error", "message": "无法获取文件经纬度数据"}), 404
 
+@app.route('/api/hdf5_groups/<int:file_id>')
+def get_file_groups(file_id):
+    groups = get_hdf5_groups_from_db(file_id)
+    return jsonify({"status": "success", "data": groups})
+
 @app.route('/api/hdf5_variables/<int:file_id>')
 def get_file_variables(file_id):
-    print(f"[DEBUG] get_file_variables called for file_id: {file_id}")
-    variables = get_hdf5_variables_from_db(file_id)
-    if variables:
-        print(f"[DEBUG] get_file_variables returning success for file_id: {file_id}, variables: {variables}")
-        return jsonify({"status": "success", "data": variables}), 200
-    else:
-        print(f"[DEBUG] get_file_variables returning success for file_id: {file_id}, no variables found.")
-        return jsonify({"status": "success", "data": [], "message": "未找到任何变量"}), 200
+    # 从URL查询参数中获取group_path，例如: /api/hdf5_variables/1?group=/FS/Swath
+    group_path = request.args.get('group', None)
+    print(f"[DEBUG] get_file_variables called for file_id: {file_id}, group: {group_path}")
+    variables = get_hdf5_variables_from_db(file_id, group_path)
+    # 注意：这里不再对variables是否为空做特殊判断，直接返回数据库查询结果
+    print(f"[DEBUG] get_file_variables returning success for file_id: {file_id}, variables: {variables}")
+    return jsonify({"status": "success", "data": variables}), 200
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -123,8 +128,21 @@ def upload_file():
             print("[DEBUG] 未选择文件")
             return "没有选择文件", 400
 
-        unique_filename = str(uuid.uuid4()) + os.path.splitext(file.filename)[1]
-        temp_filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+        # 获取用户提供的重命名，并去除首尾空格
+        new_filename_base = request.form.get('new_filename', '').strip()
+        original_filename_base = os.path.splitext(file.filename)[0]
+        file_extension = os.path.splitext(file.filename)[1]
+
+        # 决定最终的文件名
+        if new_filename_base:
+            # 用户提供了重命名
+            unique_filename = new_filename_base + file_extension
+        else:
+            # 用户未提供，使用原名+时间戳
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            unique_filename = f"{original_filename_base}_{timestamp}{file_extension}"
+
+        temp_filepath = os.path.join(app.config['UPLOAD_FOLDER'], str(uuid.uuid4()) + file_extension) # 临时文件仍然使用UUID防止冲突
         print(f"[DEBUG] 准备保存上传文件到临时路径: {temp_filepath}")
         file.save(temp_filepath)
         print(f"[DEBUG] 文件已保存到临时路径")
@@ -132,13 +150,14 @@ def upload_file():
         jfs_filepath = os.path.join(JUICEFS_MOUNT_POINT, unique_filename)
         print(f"[DEBUG] 目标JuiceFS路径: {jfs_filepath}")
 
-        # 复制文件到JuiceFS挂载点
-        shutil.copy(temp_filepath, jfs_filepath)
-        print(f"[DEBUG] 文件已复制到JuiceFS挂载点")
+        # 检查目标文件是否已存在，避免覆盖
+        if os.path.exists(jfs_filepath):
+            os.remove(temp_filepath) # 清理临时文件
+            return f"文件上传失败：JuiceFS中已存在同名文件 '{unique_filename}'。请使用不同的名称重命名。", 409 # 409 Conflict
 
-        # 删除临时文件
-        os.remove(temp_filepath)
-        print(f"[DEBUG] 临时文件已删除: {temp_filepath}")
+        # 移动文件到JuiceFS挂载点 (使用shutil.move更高效)
+        shutil.move(temp_filepath, jfs_filepath)
+        print(f"[DEBUG] 文件已移动到JuiceFS挂载点")
 
         # 调用元数据入库
         print(f"[DEBUG] 开始调用元数据入库函数，处理文件: {jfs_filepath}")
@@ -219,15 +238,36 @@ def crop_hdf5_file():
 def interpolate_hdf5_file():
     try:
         data = request.get_json()
+        
+        # 安全地转换所有可能为空的数值参数
+        def safe_float(value):
+            if value is None or value == '':
+                return None
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return None # 如果转换失败，也返回None
+
+        def safe_int(value):
+            if value is None or value == '':
+                return None
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                return None
+
         file_id = data.get('file_id')
         var_name = data.get('var_name')
-        resolution = float(data.get('resolution'))
-        lon_min = data.get('lon_min')
-        lon_max = data.get('lon_max')
-        lat_min = data.get('lat_min')
-        lat_max = data.get('lat_max')
-        layer_min = data.get('layer_min')
-        layer_max = data.get('layer_max')
+        resolution = safe_float(data.get('resolution'))
+        lon_min = safe_float(data.get('lon_min'))
+        lon_max = safe_float(data.get('lon_max'))
+        lat_min = safe_float(data.get('lat_min'))
+        lat_max = safe_float(data.get('lat_max'))
+        layer_min = safe_int(data.get('layer_min'))
+        layer_max = safe_int(data.get('layer_max'))
+
+        if file_id is None or var_name is None or resolution is None:
+            return jsonify({"status": "error", "message": "缺少必要参数: file_id, var_name, resolution"}), 400
 
         task_id = str(uuid.uuid4())
         task_data = {

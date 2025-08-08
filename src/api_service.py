@@ -17,6 +17,12 @@ DB_NAME = "juicefs"
 DB_USER = "juiceuser"
 DB_PASSWORD = "0333"
 
+# --- 路径转换配置 (用于适配开发环境和生产环境) ---
+# 数据库中存储的生产环境路径前缀
+DB_PATH_PREFIX = '/mnt/jfs/'
+# 本地开发环境的挂载点
+LOCAL_MOUNT_POINT = '/mnt/myjfs/'
+
 
 def get_hdf5_files_from_db():
     """
@@ -134,23 +140,65 @@ def get_hdf5_latlon_data(file_id: int):
             conn.close()
 
 
-def get_hdf5_variables_from_db(file_id: int):
+def get_hdf5_groups_from_db(file_id: int):
     """
-    从数据库中获取指定HDF5文件的所有变量名。
+    从数据库中获取指定HDF5文件的所有组路径。
+
     Args:
         file_id (int): HDF5文件的数据库ID。
     Returns:
-        list: 包含变量名的列表，例如 ['airTemperature', 'pressure']。
+        list: 包含组路径的列表，例如 ['/', '/FS', '/FS/Swath']。
+    """
+    conn = None
+    try:
+        conn = psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT full_path FROM hdf5_groups WHERE file_id = %s ORDER BY full_path;", (file_id,))
+        groups = [row[0] for row in cur.fetchall()]
+        # 确保根路径存在
+        if '/' not in groups:
+            groups.insert(0, '/')
+        return groups
+    except (Exception, psycopg2.Error) as error:
+        print(f"获取HDF5组列表失败: {error}")
+        traceback.print_exc()
+        return []
+    finally:
+        if conn:
+            cur.close()
+            conn.close()
+
+
+def get_hdf5_variables_from_db(file_id: int, group_path: str = None):
+    """
+    从数据库中获取指定HDF5文件的所有数据集变量名。
+    这个实现是通用的，会返回文件内所有可识别的数据集。
+
+    Args:
+        file_id (int): HDF5文件的数据库ID。
+    Returns:
+        list: 包含变量名的列表，例如 ['airTemperature', 'pressure', 'Latitude', 'Longitude']。
               如果发生错误或找不到数据，返回空列表。
     """
     conn = None
     try:
         conn = psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
         cur = conn.cursor()
-        # 查询属于该文件且parent_path为'FS/VER'的dataset的name
-        cur.execute("SELECT name FROM hdf5_datasets WHERE file_id = %s AND (parent_path LIKE 'FS/%%' OR parent_path LIKE 'HS/%%\');", (file_id,))
-        variables = [row[0] for row in cur.fetchall()]
-        print(f"[DEBUG] get_hdf5_variables_from_db: file_id={file_id}, variables={variables}")
+        # 动态构建查询语句
+        base_query = "SELECT name FROM hdf5_datasets WHERE file_id = %s"
+        params = [file_id]
+
+        if group_path:
+            base_query += " AND parent_path = %s"
+            params.append(group_path)
+        
+        base_query += " ORDER BY name;"
+        
+        cur.execute(base_query, tuple(params))
+
+        # 使用 set 来自动去重，然后转为 list 并排序
+        variables = sorted(list(set([row[0] for row in cur.fetchall()])))
+        print(f"[DEBUG] get_hdf5_variables_from_db (通用): file_id={file_id}, group='{group_path}', variables={variables}")
         return variables
     except (Exception, psycopg2.Error) as error:
         print(f"获取HDF5变量列表失败: {error}")
@@ -198,6 +246,8 @@ def find_and_crop_hdf5(file_name: str, lat_min: float, lat_max: float, lon_min: 
             raise ValueError(f"在数据库中未找到文件名为 '{file_name}' 的记录。")
 
         file_id, input_hdf_path = file_record
+        # 将数据库中的路径转换为本地可访问的路径
+        input_hdf_path = input_hdf_path.replace(DB_PATH_PREFIX, LOCAL_MOUNT_POINT)
         print(f"找到文件记录: ID={file_id}, Path='{input_hdf_path}'")
 
         # 3. 智能推断经纬度变量名和组路径
@@ -319,7 +369,7 @@ def perform_interpolation(file_id: int, var_name: str, resolution: float,
         print(f"  层范围: Layer({layer_min}, {layer_max})")
 
         output_file_path = run_interpolation(
-            input_file=input_hdf_path,
+            file_id=file_id, # 传递 file_id 而不是文件路径
             var_name=var_name,
             resolution=resolution,
             output_dir=output_dir,
