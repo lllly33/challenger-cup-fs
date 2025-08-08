@@ -6,6 +6,7 @@ from datetime import datetime # 导入 datetime 模块
 from src.write.writehdf5 import parse_and_store_hdf5_metadata
 from src.api_service import get_hdf5_files_from_db, get_hdf5_latlon_data, find_and_crop_hdf5, get_hdf5_variables_from_db, get_hdf5_groups_from_db
 from flask import jsonify # 导入 jsonify
+from config import JUICEFS_MOUNT_POINT
 from multiprocessing import Process, Manager, Queue # 导入 multiprocessing 模块
 import time
 
@@ -19,7 +20,7 @@ task_statuses = manager.dict() # 用于存储任务状态和结果
 UPLOAD_FOLDER = 'uploads'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-JUICEFS_MOUNT_POINT = '/mnt/myjfs'  # 请确认路径正确
+
 
 # 后台工作函数
 def worker(task_queue, task_statuses):

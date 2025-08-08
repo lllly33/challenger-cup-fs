@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
 import numpy as np
+
+# 定义缺失值常量
+CUSTOM_MISSING = -9999.0 # 或者其他你认为合适的数值，例如 np.nan
+
+# IDW插值参数
+MIN_NEIGHBORS = 3       # 最小邻居数
+MAX_NEIGHBORS = 10      # 最大邻居数
+MAX_DISTANCE = 0.5      # 搜索半径 (度)
+POWER = 2               # IDW的幂次
+
+# 并行处理参数
+BLOCK_SIZE = 100        # 分块大小
+PARALLEL = True         # 是否启用并行处理
+NUM_CORES = -1          # 并行核心数，-1表示使用所有可用核心
 import h5py
 import os
 import time
@@ -8,27 +22,9 @@ import traceback
 from scipy.spatial import cKDTree
 from tqdm import tqdm
 from joblib import Parallel, delayed
-
-# --- 数据库连接参数 ---
-DB_HOST = "localhost"
-DB_NAME = "juicefs"
-DB_USER = "juiceuser"
-DB_PASSWORD = "0333"
-
-# --- 插值算法参数 ---
-CUSTOM_MISSING = -9999.9
-MAX_NEIGHBORS = 10
-MIN_NEIGHBORS = 3
-POWER = 2
-MAX_DISTANCE = 0.5
-BLOCK_SIZE = 128
-MAX_POINTS_PER_BLOCK = 50000
-PARALLEL = True
-NUM_CORES = -1
+from config import DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PATH_PREFIX, LOCAL_MOUNT_POINT
 
 
-DB_PATH_PREFIX = '/mnt/jfs/'
-LOCAL_MOUNT_POINT = '/mnt/myjfs/'
 
 
 def _get_paths_from_db(file_id: int, var_name: str):
@@ -110,12 +106,12 @@ def read_hdf5_data(file_path, data_path, lat_path, lon_path):
     # 维度校验
     assert longitude.shape == latitude.shape, "经纬度维度不匹配"
     assert len(data.shape) in (2, 3), f"变量必须为二维或三维，实际形状: {data.shape}"
-    
+
     # 对于GPM等数据，数据的前两维通常与经纬度匹配
     if data.shape[:2] != longitude.shape:
         print(f"[WARNING] 变量维度 {data.shape} 与经纬度维度 {longitude.shape} 前两维不匹配。请检查数据结构。")
         # 这里可以根据需要添加更复杂的维度匹配逻辑
-        
+
     # 二维变量转为三维单一层格式
     if len(data.shape) == 2:
         print(f"检测到二维变量，自动转换为单一层格式 (添加维度)")
@@ -151,13 +147,13 @@ def preprocess_data(longitude, latitude, data, lon_min_arg=None, lon_max_arg=Non
     coord_valid = lon_valid & lat_valid
 
     global_valid = coord_valid.copy()
-    
+
     # 逐层处理缺失值
     for layer in range(total_layers):
         data_layer = filled_data[:, :, layer]
         missing_mask = (data_layer == CUSTOM_MISSING) | np.isnan(data_layer)
         missing_mask &= coord_valid
-        
+
         if np.sum(missing_mask) > 0:
             valid_mask = ~missing_mask & coord_valid
             valid_lon_layer = longitude[valid_mask]
@@ -168,7 +164,7 @@ def preprocess_data(longitude, latitude, data, lon_min_arg=None, lon_max_arg=Non
                 tree = cKDTree(np.column_stack((valid_lon_layer, valid_lat_layer)))
                 missing_points = np.column_stack((longitude[missing_mask], latitude[missing_mask]))
                 distances, indices = tree.query(missing_points, k=min(MAX_NEIGHBORS, len(valid_data_layer)), distance_upper_bound=MAX_DISTANCE)
-                
+
                 interpolated_values = np.full(missing_points.shape[0], CUSTOM_MISSING, dtype=np.float32)
                 for i in range(len(missing_points)):
                     valid_nb = distances[i] < MAX_DISTANCE
@@ -179,7 +175,7 @@ def preprocess_data(longitude, latitude, data, lon_min_arg=None, lon_max_arg=Non
                         weights = 1.0 / (distances[i][valid_nb] ** POWER)
                         weights /= weights.sum()
                         interpolated_values[i] = np.sum(valid_data_layer[indices[i][valid_nb]] * weights)
-                
+
                 data_layer[missing_mask] = interpolated_values
                 filled_data[:, :, layer] = data_layer
                 global_valid &= ~(missing_mask & (interpolated_values == CUSTOM_MISSING))
@@ -294,13 +290,27 @@ def save_to_hdf5(output_path, grid_lon, grid_lat, all_results, total_layers, var
             dset = grp.create_dataset(var_name, data=all_results[0], compression='gzip', compression_opts=3)
         else:
             dset = grp.create_dataset(var_name, data=np.array(all_results), compression='gzip', compression_opts=3)
-        
+
         dset.attrs['missing_value'] = CUSTOM_MISSING
         grp.attrs['grid_resolution'] = resolution
         grp.attrs['variable_name'] = var_name
         grp.attrs['original_dimension'] = original_dim
         if original_dim == 3:
             grp.attrs['layers_processed'] = f"{layer_min_arg or 0}-{layer_max_arg or (total_layers-1)}"
+
+def generate_report(total_valid, total_points, total_layers, var_name, original_dim, output_file, layer_min_arg=None, layer_max_arg=None):
+    coverage = 100 * total_valid / total_points if total_points else 0
+    print("\n" + "=" * 60)
+    print("                  插值完成报告")
+    print("=" * 60)
+    print(f"变量名: {var_name}")
+    print(f"原始维度: {original_dim}D，处理层数: {total_layers}")
+    if original_dim == 3 and (layer_min_arg is not None or layer_max_arg is not None):
+        print(f"层范围: {layer_min_arg or 0}至{layer_max_arg or (total_layers - 1)}")
+    print(f"总覆盖率: {coverage:.2f}%")
+    print(f"结果文件: {output_file}")
+    print("=" * 60)
+
 
 
 def run_interpolation(
@@ -342,14 +352,20 @@ def run_interpolation(
 
         # 批量插值
         all_results = []
+        total_valid, total_points = 0, 0
         for i, layer in enumerate(tqdm(data_layers, desc="总进度")):
-            res, _, _ = batch_idw(valid_lon, valid_lat, layer, grid_lon, grid_lat, i)
+            res, valid, total = batch_idw(valid_lon, valid_lat, layer, grid_lon, grid_lat, i)
             all_results.append(res)
+            total_valid += valid
+            total_points += total
 
         # 保存结果
         save_to_hdf5(output_file, grid_lon, grid_lat, all_results, total_layers, var_name, original_dim, resolution, layer_min, layer_max)
 
-        print(f"\\n总耗时: {time.time() - start:.2f}秒")
+        # 生成报告
+        generate_report(total_valid, total_points, total_layers, var_name, original_dim, output_file, layer_min, layer_max)
+
+        print(f"\n总耗时: {time.time() - start:.2f}秒")
         return output_file
 
     except Exception as e:

@@ -16,6 +16,74 @@
     <!-- Custom styles for this template-->
     <link href="/static/css/sb-admin-2.min.css" rel="stylesheet">
 
+    <style>
+        .file-upload-container {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+
+        .file-upload-area {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            padding: 10px;
+            border: 1px dashed #ccc;
+            border-radius: 5px;
+            width: 100%;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+
+        .file-upload-area:hover {
+            border-color: #007bff;
+            background-color: #f8f9fc;
+        }
+
+        .file-upload-icon {
+            font-size: 3rem; /* Adjust size as needed */
+            color: #6c757d; /* Default icon color */
+            transition: color 0.3s ease;
+        }
+
+        .file-upload-area:hover .file-upload-icon {
+            color: #007bff; /* Color on hover */
+        }
+
+        .file-upload-area.file-selected .file-upload-icon {
+            color: #28a745; /* Color when file is selected */
+        }
+
+        #fileNameDisplay {
+            margin-left: 15px;
+            font-size: 1.1rem;
+            color: #6c757d;
+        }
+
+        .file-upload-area.file-selected #fileNameDisplay {
+            color: #28a745;
+            font-weight: bold;
+        }
+
+        /* 针对下拉框选项文本过长的问题 */
+        #hdf5FileSelect {
+            word-wrap: break-word; /* 允许长单词在必要时换行 */
+            white-space: normal;   /* 允许文本换行 */
+            width: 100%;           /* 确保宽度为100% */
+            max-width: 100%;       /* 确保最大宽度为100% */
+        }
+
+        /* 针对下拉框选项本身 */
+        #hdf5FileSelect option {
+            word-wrap: break-word;
+            white-space: normal;
+            overflow: hidden;
+            text-overflow: ellipsis; /* 如果文本仍然过长，显示省略号 */
+        }
+    </style>
+
 </head>
 
 <body id="page-top">
@@ -47,7 +115,7 @@
             <!-- Nav Item - Processing -->
             <li class="nav-item">
                 <a class="nav-link" href="#" data-target="#processing-card">
-                    <i class="fas fa-fw fa-cogs"></i>
+                    <i class="fas fa-fw fa-wrench"></i>
                     <span>数据处理</span></a>
             </li>
 
@@ -88,9 +156,13 @@
                         </div>
                         <div class="card-body">
                             <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
-                                <div class="mb-3">
+                                <div class="mb-3 file-upload-container">
                                     <label for="file" class="form-label">选择HDF5文件:</label>
-                                    <input class="form-control" type="file" id="file" name="file" accept=".h5,.hdf5" required>
+                                    <input class="form-control" type="file" id="file" name="file" accept=".h5,.hdf5" required style="display: none;">
+                                    <div class="file-upload-area">
+                                        <i class="fas fa-cloud-upload-alt file-upload-icon" id="uploadIcon"></i>
+                                        <span id="fileNameDisplay" class="text-muted ms-2">点击图标选择文件</span>
+                                    </div>
                                 </div>
                                 <div class="mb-3">
                                     <label for="new_filename" class="form-label">重命名 (可选):</label>
@@ -236,6 +308,30 @@
                 });
         });
 
+        // --- File Upload Area Interaction ---
+        const fileInput = document.getElementById('file');
+        const fileUploadArea = document.querySelector('.file-upload-area');
+        const fileNameDisplay = document.getElementById('fileNameDisplay');
+        const uploadIcon = document.getElementById('uploadIcon');
+
+        fileUploadArea.addEventListener('click', function() {
+            fileInput.click(); // Trigger the hidden file input click
+        });
+
+        fileInput.addEventListener('change', function() {
+            if (fileInput.files.length > 0) {
+                fileNameDisplay.textContent = fileInput.files[0].name;
+                fileUploadArea.classList.add('file-selected');
+                uploadIcon.classList.remove('fa-cloud-upload-alt');
+                uploadIcon.classList.add('fa-file-upload'); // Change icon to indicate file selected
+            } else {
+                fileNameDisplay.textContent = '点击图标选择文件';
+                fileUploadArea.classList.remove('file-selected');
+                uploadIcon.classList.remove('fa-file-upload');
+                uploadIcon.classList.add('fa-cloud-upload-alt'); // Revert icon
+            }
+        });
+
         // --- Data Processing Logic ---
 
         // Function to load HDF5 files into the select dropdown
@@ -328,8 +424,9 @@
                         <select class="form-select" id="var_name" name="var_name" required><option value="">请先选择一个组</option></select>
                     </div>
                     <div class="mb-3"><label for="resolution" class="form-label">目标分辨率 (度):</label><input type="number" step="any" class="form-control" id="resolution" name="resolution" value="0.1" required></div>
-                    <p class="text-muted small">其他参数（如经纬度范围、层数范围）均为可选。</p>
-                    <!-- Optional params can be added here if needed -->
+                    <div class="row"><div class="col-md-6"><label for="lat_min" class="form-label">最小纬度 (可选):</label><input type="number" step="any" class="form-control" id="lat_min" name="lat_min"></div><div class="col-md-6"><label for="lat_max" class="form-label">最大纬度 (可选):</label><input type="number" step="any" class="form-control" id="lat_max" name="lat_max"></div></div>
+                    <div class="row mt-2"><div class="col-md-6"><label for="lon_min" class="form-label">最小经度 (可选):</label><input type="number" step="any" class="form-control" id="lon_min" name="lon_min"></div><div class="col-md-6"><label for="lon_max" class="form-label">最大经度 (可选):</label><input type="number" step="any" class="form-control" id="lon_max" name="lon_max"></div></div>
+                    <div class="row mt-2"><div class="col-md-6"><label for="layer_min" class="form-label">起始层索引 (可选):</label><input type="number" step="1" class="form-control" id="layer_min" name="layer_min"></div><div class="col-md-6"><label for="layer_max" class="form-label">结束层索引 (可选):</label><input type="number" step="1" class="form-control" id="layer_max" name="layer_max"></div></div>
                 `;
                 if (groupPath) {
                     const varNameSelect = document.getElementById('var_name');
@@ -352,6 +449,18 @@
                             }
                         });
                 }
+
+                // Fetch and pre-fill lat/lon for interpolation as well
+                fetch(`/api/hdf5_file_latlon/${fileId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            document.getElementById('lat_min').value = data.data.lat_min;
+                            document.getElementById('lat_max').value = data.data.lat_max;
+                            document.getElementById('lon_min').value = data.data.lon_min;
+                            document.getElementById('lon_max').value = data.data.lon_max;
+                        }
+                    });
             }
         });
 

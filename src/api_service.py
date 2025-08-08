@@ -6,22 +6,13 @@ from datetime import datetime
 import traceback
 import h5py
 import numpy as np
+from config import DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PATH_PREFIX, LOCAL_MOUNT_POINT
 
 # 假设 cropper 模块在 src/cropper/ 路径下
 from .cropper.SpaceCropping import HDF5Cropper, HDF5CropperError
 from .interpolation.main_new import run_interpolation
 
-# --- 数据库连接参数 (与 writehdf5.py 保持一致) ---
-DB_HOST = "localhost"
-DB_NAME = "juicefs"
-DB_USER = "juiceuser"
-DB_PASSWORD = "0333"
 
-# --- 路径转换配置 (用于适配开发环境和生产环境) ---
-# 数据库中存储的生产环境路径前缀
-DB_PATH_PREFIX = '/mnt/jfs/'
-# 本地开发环境的挂载点
-LOCAL_MOUNT_POINT = '/mnt/myjfs/'
 
 
 def get_hdf5_files_from_db():

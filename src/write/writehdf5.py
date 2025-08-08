@@ -4,12 +4,10 @@ import os
 import numpy as np
 from datetime import datetime
 import traceback
+from config import DB_HOST, DB_NAME, DB_USER, DB_PASSWORD
 
 # PostgreSQL 数据库连接参数
-DB_HOST = "localhost"
-DB_NAME = "juicefs"
-DB_USER = "juiceuser"
-DB_PASSWORD = "0333"
+
 
 
 def insert_hdf5_file_metadata(cursor, file_name, file_path):
