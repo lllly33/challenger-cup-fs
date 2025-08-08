@@ -31,7 +31,7 @@
                 <div class="sidebar-brand-icon rotate-n-15">
                     <i class="fas fa-globe"></i>
                 </div>
-                <div class="sidebar-brand-text mx-3">数据处理平台</div>
+                <div class="sidebar-brand-text mx-3">地球科学数据处理平台</div>
             </a>
 
             <!-- Divider -->
@@ -150,7 +150,7 @@
             <footer class="sticky-footer bg-white">
                 <div class="container my-auto">
                     <div class="copyright text-center my-auto">
-                        <span>Copyright &copy; Your Website 2024</span>
+                        <span>面向地球系统科学的海量网格类数据的分布式文件系统</span>
                     </div>
                 </div>
             </footer>
@@ -228,7 +228,7 @@
                 .then(result => {
                     uploadResultDiv.innerHTML = `<div class="alert alert-success">${result}</div>`;
                     // Refresh file list in the processing card
-                    loadHdf5Files(); 
+                    loadHdf5Files();
                 })
                 .catch(error => {
                     console.error('Upload error:', error);
