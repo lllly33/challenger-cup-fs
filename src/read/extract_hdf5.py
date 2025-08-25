@@ -4,12 +4,7 @@ import numpy as np
 import json
 import os
 from datetime import datetime
-
-# PostgreSQL 数据库连接参数
-DB_HOST = "localhost"
-DB_NAME = "juicefs"
-DB_USER = "juiceuser"
-DB_PASSWORD = "0333"
+from config import DB_HOST, DB_NAME, DB_USER, DB_PASSWORD
 
 
 def find_hdf5_files_by_path(search_path):
@@ -173,16 +168,16 @@ def list_available_paths(file_id):
 
         # 获取所有Groups路径
         cur.execute("""
-            SELECT full_path FROM hdf5_groups 
-            WHERE file_id = %s 
+            SELECT full_path FROM hdf5_groups
+            WHERE file_id = %s
             ORDER BY full_path
         """, (file_id,))
         group_paths = [row[0] for row in cur.fetchall()]
 
         # 获取所有Datasets路径
         cur.execute("""
-            SELECT full_path FROM hdf5_datasets 
-            WHERE file_id = %s 
+            SELECT full_path FROM hdf5_datasets
+            WHERE file_id = %s
             ORDER BY full_path
         """, (file_id,))
         dataset_paths = [row[0] for row in cur.fetchall()]
