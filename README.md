@@ -1,5 +1,14 @@
 # 面向地球系统科学的海量网格类数据的分布式文件系统
 
+## 准备环境
+
++ postgresql数据库
++ juicefs
++ 不同机器部署juicefs
+
+  1.修改scripts/create_tables.py 里面的数据库链接参数，用于创建相应元数据表
+  2.修改config.py里的对应数据库链接参数，确保四大函数的正常运行
+
 本项目是为2025年度中国青年科技创新“揭榜挂帅”擂台赛（CQ-16赛题）设计的解决方案，旨在解决地球系统科学领域中海量网格类数据（如HDF5、GRIB）管理和访问的挑战。
 
 ## 1. 项目背景与痛点
@@ -22,40 +31,6 @@
 - **元数据层**:
   - **一级元数据 (JuiceFS)**: 文件名、权限、大小等基本信息，由JuiceFS自身管理。
   - **二级元数据 (PostgreSQL)**: **本项目的核心创新**。在文件上传时，系统会自动解析HDF5文件，将内部的Group、Dataset、Attribute等结构化信息，以及每个数据块在对象存储中的物理位置存入PostgreSQL数据库，建立起从“科学语义”到“物理地址”的快速映射。
-
-### 系统架构
-
-```mermaid
-graph TD
-    subgraph 用户交互层
-        A[用户/应用]
-    end
-
-    subgraph 应用层
-        B[Web界面/Python SDK/CLI]
-        C[核心函数库: 裁剪/插值/读写]
-        D[元数据服务: PostgreSQL]
-        E[分布式文件系统: JuiceFS]
-    end
-
-    subgraph 存储层
-        F[对象存储: 阿里云OSS]
-    end
-
-    subgraph 基础设施层
-        G[阿里云ECS集群]
-    end
-
-    A --> B
-    B --> C
-    C --> D
-    C --> E
-    E --> D
-    E --> F
-    D --> F
-    B --> E
-    G -.-> D & E & F
-```
 
 ## 3. 主要功能与特性
 
@@ -104,64 +79,3 @@ graph TD
   3. **并行计算**: 在多个计算节点上并行执行IDW插值。
   4. **结果拼接**: 主控节点收集所有块的计算结果，拼接成完整的插值后网格数据。
 - **特点**: 并行友好，效率高，内存占用低。
-
-## 6. 使用示例
-
-### 命令行接口
-
-**检查文件结构**
-
-```bash
-python src/cropper/main.py -i /path/to/your/file.h5 --inspect
-```
-
-**执行空间裁剪**
-
-```bash
-python src/cropper/main.py \
-    -i /path/to/your/file.h5 \
-    -o /path/to/output/cropped_file.h5 \
-    --lat-min 20 --lat-max 30 \
-    --lon-min 100 --lon-max 120 \
-    --lat-var lat_variable_name \
-    --lon-var lon_variable_name \
-    -d "variable1" "variable2" \
-    -v
-```
-
-### Python API
-
-```python
-from src.api_service import crop_hdf5_file, inspect_hdf5_structure
-
-# 检查文件结构
-inspect_hdf5_structure('/path/to/your/file.h5')
-
-# 执行裁剪
-crop_hdf5_file(
-    input_hdf='/path/to/your/file.h5',
-    output_hdf='/path/to/output/cropped.h5',
-    lat_min=20, lat_max=30,
-    lon_min=100, lon_max=120,
-    lat_var='lat',
-    lon_var='lon',
-    data_vars=['temperature', 'pressure']
-)
-```
-
-## 7. 性能对比
-
-实验证明，本系统相较于传统方案有压倒性优势。
-
-| 评估维度               | 传统方案 (直接解析HDF5) | 本系统 (Geo-Grid FS)              | 提升幅度                               |
-| :--------------------- | :---------------------- | :-------------------------------- | :------------------------------------- |
-| **元数据完整性** | 仅基础文件属性          | 字段级语义元数据                  | **质的飞跃**，支持精细化查询     |
-| **局部访问效率** | 需全文件解析，I/O开销大 | 基于元数据直接偏移定位，I/O开销小 | **数十至上百倍**性能提升         |
-| **功能库完备性** | 强依赖特定格式开发包    | 内置4类核心操作，统一接口         | **完全替代**，更易用、集成度更高 |
-| **部署成本**     | 需要专用硬件            | 云原生弹性架构，利用开源技术      | **显著降低**，约60%              |
-
-**查询响应时间稳定在约0.33秒**，不受文件大小增长的影响，展现了极佳的扩展性。
-
-## 9. 许可协议
-
-本项目所有资源遵循 **MIT License** 开源协议。

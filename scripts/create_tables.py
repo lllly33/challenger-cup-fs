@@ -3,10 +3,10 @@ import psycopg2
 from psycopg2 import sql
 
 # PostgreSQL 数据库连接参数
-DB_HOST = "localhost"
-DB_NAME = "juicefs"
-DB_USER = "juiceuser"
-DB_PASSWORD = "0333"
+DB_HOST = "XXXX"
+DB_NAME = "XXXX"
+DB_USER = "XXXX"
+DB_PASSWORD = "XXXX"
 
 def create_tables():
     """

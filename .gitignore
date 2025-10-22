@@ -12,6 +12,7 @@ minio
 
 # 忽略 myfolder 下的所有内容
 out/*
-
+extract/*
 # 但保留一个特定的文件（比如 .gitkeep）
 !out/.gitkeep
+!extract/.gitkeep

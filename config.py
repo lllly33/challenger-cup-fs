@@ -1,4 +1,4 @@
-# config.py
+# 修改为自己的服务器配置
 
 # JuiceFS 挂载点
 JUICEFS_MOUNT_POINT = '/mnt/jfs'
@@ -13,3 +13,4 @@ DB_PASSWORD = "0333"
 DB_PATH_PREFIX = '/mnt/jfs/'
 # 部署到服务器时，本地挂载点和数据库路径前缀是相同的
 LOCAL_MOUNT_POINT = '/mnt/jfs/'
+
